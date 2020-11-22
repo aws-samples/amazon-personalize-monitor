@@ -1,0 +1,8 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "personalize-monitor"
+s3_prefix = "personalize-monitor"
+parameter_overrides = "CampaignARNs=\"all\" AutoCreateCampaignUtilizationAlarms=\"Yes\" CampaignThresholdAlarmLowerBound=\"100\" AutoCreateIdleCampaignAlarms=\"Yes\""
+capabilities = "CAPABILITY_IAM"

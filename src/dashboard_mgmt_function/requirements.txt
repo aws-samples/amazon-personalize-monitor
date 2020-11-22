@@ -1,0 +1,3 @@
+aws-lambda-powertools==1.6.1
+chevron==0.13.1
+crhelper==2.0.6

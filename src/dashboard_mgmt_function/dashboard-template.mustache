@@ -1,0 +1,112 @@
+{
+	"widgets": [{
+		"type": "metric",
+		"width": 4,
+		"height": 4,
+		"properties": {
+			"metrics": [
+				["{{namespace}}", "monitoredCampaignCount"]
+			],
+			"view": "singleValue",
+			"region": "{{current_region}}",
+			"title": "Campaigns Monitored",
+			"stat": "Average",
+			"period": 300
+		}
+	},
+	{
+		"type": "text",
+		"width": 20,
+		"height": 4,
+		"properties": {
+			"markdown": "\n## Amazon Personalize Monitor Dashboard\n*This dashboard and its widgets were created and managed via the [Personalize Monitor](https://github.com/aws-samples/amazon-personalize-samples/) application.*\n\nFor best practices on integrating with and operating [Amazon Personalize](https://aws.amazon.com/personalize/), please see our [Cheat Sheet](https://github.com/aws-samples/amazon-personalize-samples/blob/master/PersonalizeCheatSheet2.0.md).\n\nResources: [Service Documentation](https://docs.aws.amazon.com/personalize/latest/dg/what-is-personalize.html) | [Personalize Blog](https://aws.amazon.com/blogs/machine-learning/category/artificial-intelligence/amazon-personalize/) | [Samples on GitHub](https://github.com/aws-samples/amazon-personalize-samples)\n"
+		}
+	}
+	{{#dataset_groups}}
+	,{
+		"type": "text",
+		"width": 24,
+		"height": 1,
+		"properties": {
+			"markdown": "\n### Dataset Group: **{{name}}** ({{region}}) | [Manage](https://console.aws.amazon.com/personalize/home?region={{region}}#arn:aws:personalize:{{region}}:{{account_id}}:dataset-group${{name}}/campaigns)\n"
+		}
+	},
+	{
+		"type": "metric",
+		"width": 8,
+		"height": 8,
+		"properties": {
+			"metrics": [
+				{{#campaigns}}
+				["{{namespace}}", "minProvisionedTPS", "CampaignArn", "{{campaign_arn}}", {
+					"label": "{{name}} minProvisionedTPS"
+				}],
+				["{{namespace}}", "averageTPS", "CampaignArn", "{{campaign_arn}}", {
+					"label": "{{name}} averageTPS"
+				}]{{^last_campaign}}, {{/last_campaign}}
+				{{/campaigns}}
+			],
+			"region": "{{region}}", 
+			"view": "timeSeries",
+			"stacked": false,
+			"stat": "Average",
+			"period": 300,
+			"title": "Actual vs Provisioned TPS",
+			"yAxis": {
+				"left": {
+					"label": "TPS",
+					"min": 0,
+					"showUnits": false
+				},
+				"right": {
+					"showUnits": true,
+					"label": ""
+				}
+			},
+			"annotations": {
+				"horizontal": [{
+					"label": "Lowest TPS Allowed",
+					"value": 1
+				}]
+			}
+		}
+	},
+	{
+		"type": "metric",
+		"width": 8,
+		"height": 8,
+		"properties": {
+			"view": "timeSeries",
+			"stacked": false,
+			"metrics": [
+				{{#campaigns}}
+				["{{namespace}}", "campaignUtilization", "CampaignArn", "{{campaign_arn}}", {
+					"label": "{{name}} campaignUtilization"
+				}]{{^last_campaign}}, {{/last_campaign}}
+				{{/campaigns}}
+			],
+			"region": "{{region}}", 
+			"title": "Campaign Utilization"
+		}
+	},
+	{
+		"type": "metric",
+		"width": 8,
+		"height": 8,
+		"properties": {
+			"view": "timeSeries",
+			"stacked": false,
+			"metrics": [
+				{{#campaigns}}
+				["AWS/Personalize", "{{campaign_latency_metric_name}}", "CampaignArn", "{{campaign_arn}}", {
+					"label": "{{name}} {{campaign_latency_metric_name}}"
+				}]{{^last_campaign}}, {{/last_campaign}}
+				{{/campaigns}}
+			],
+			"region": "{{region}}", 
+			"title": "Campaign Latency"
+		}
+	}
+	{{/dataset_groups}}
+	]
+}

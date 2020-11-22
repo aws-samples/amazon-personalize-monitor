@@ -1,0 +1,456 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Personalize monitoring tools including CloudWatch metrics, alarms, and dashboard; optional automated cost optimization
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: Amazon-Personalize-Monitor
+    Description: >
+      Creates a CloudWatch dashboard for monitoring the utilization of Amazon Personalize
+      campaigns, creates CloudWatch alarms based on a user-defined threshold, and
+      includes automated cost optimization actions.
+    Author: AWS
+    SpdxLicenseId: MIT-0
+    LicenseUrl: LICENSE
+    ReadmeUrl: README-SAR.md
+    Labels: ['Personalize', 'CloudWatch', 'Monitoring']
+    HomePageUrl: https://github.com/aws-samples/amazon-personalize-monitor
+    SemanticVersion: 1.0.0
+    SourceCodeUrl: https://github.com/aws-samples/amazon-personalize-monitor
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Amazon Personalize campaigns to monitor"
+        Parameters:
+          - CampaignARNs
+          - Regions
+      - Label:
+          default: "CloudWatch alarm configuration"
+        Parameters:
+          - AutoCreateCampaignUtilizationAlarms
+          - CampaignThresholdAlarmLowerBound
+          - AutoCreateIdleCampaignAlarms
+          - IdleCampaignThresholdHours
+      - Label:
+          default: "Cost optimization actions"
+        Parameters:
+          - AutoAdjustCampaignMinProvisionedTPS
+          - AutoDeleteIdleCampaigns
+      - Label:
+          default: "Notifications"
+        Parameters:
+          - NotificationEndpoint
+    ParameterLabels:
+      CampaignARNs:
+        default: "Personalize campaign ARNs to monitor"
+      Regions:
+        default: "AWS regions to monitor"
+      AutoCreateCampaignUtilizationAlarms:
+        default: "Automatically create campaign utilization CloudWatch alarms?"
+      CampaignThresholdAlarmLowerBound:
+        default: "Campaign utilization alarm lower bound threshold"
+      AutoCreateIdleCampaignAlarms:
+        default: "Automatically create idle campaign CloudWatch alarms?"
+      IdleCampaignThresholdHours:
+        default: "Number of hours without requests to be considered idle"
+      AutoDeleteIdleCampaigns:
+        default: "Automatically delete idle campaigns in idle alarm state?"
+      AutoAdjustCampaignMinProvisionedTPS:
+        default: "Automatically adjust/lower minProvisionedTPS for campaigns in utilization alarm state"
+      NotificationEndpoint:
+        default: "Email address to receive notifications"
+
+Parameters:
+  CampaignARNs:
+    Type: String
+    Description: >
+      Comma separated list of Amazon Personalize Campaign ARNs to monitor or 'all' to dynamically monitor all campaigns.
+    Default: 'all'
+
+  Regions:
+    Type: String
+    Description: >
+      Comma separated list of AWS region names. When using 'all' for CampaignARNs, this parameter can be used
+      to control the region(s) where the Personalize Monitor looks for active Personalize Campaigns. When not specified,
+      the region where you deploy this application will be used.
+
+  AutoCreateCampaignUtilizationAlarms:
+    Type: String
+    Description: >
+      Whether to automatically create CloudWatch alarms for campaign utilization for monitored campaigns. Valid values: Yes/No.
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Default: 'Yes'
+
+  CampaignThresholdAlarmLowerBound:
+    Type: Number
+    Description: >
+      Campaign utilization alarm threshold value (in percent). When a monitored campaign's utilization falls below this value,
+      the alarm state will be set to ALARM. Valid values: 0-1000 (integer).
+    MinValue: 0
+    MaxValue: 1000
+    Default: 100
+
+  AutoAdjustCampaignMinProvisionedTPS:
+    Type: String
+    Description: >
+      Whether to automatically adjust minProvisionedTPS down to lowest average TPS over rolling 24 hour window. The
+      minProvisionedTPS will never be increased. Valid values: Yes/No.
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Default: 'Yes'
+
+  AutoCreateIdleCampaignAlarms:
+    Type: String
+    Description: >
+      Whether to automatically create CloudWatch alarms for detecting idle campaigns. Valid values: Yes/No.
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Default: 'Yes'
+
+  IdleCampaignThresholdHours:
+    Type: Number
+    Description: >
+      Number of consecutive idle hours before a campaign is automatically deleted only if AutoDeleteIdleCampaigns is Yes. Valid values: 2-48 (integer).
+    MinValue: 2
+    MaxValue: 48
+    Default: 24
+
+  AutoDeleteIdleCampaigns:
+    Type: String
+    Description: >
+      Whether to automatically delete campaigns that have been idle for IdleCampaignThresholdHours consecutive hours. Valid values: Yes/No.
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Default: 'No'
+
+  NotificationEndpoint:
+    Type: String
+    Description: >
+      Email address to receive CloudWatch alarm and other monitoring notifications.
+
+Globals:
+  Function:
+    Timeout: 5
+    Runtime: python3.8
+
+Resources:
+  NotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: 'Personalize Monitor Notifications'
+      Subscription:
+        - Endpoint: !Ref NotificationEndpoint
+          Protocol: email
+      Tags:
+        - Key: 'CreatedBy'
+          Value: 'PersonalizeMonitor'
+      TopicName: PersonalizeMonitorNotifications
+
+  NotificationsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Sid: PublishPolicy
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudwatch.amazonaws.com
+                - events.amazonaws.com
+            Action: 'sns:Publish'
+            Resource: !Ref NotificationsTopic
+      Topics:
+        - !Ref NotificationsTopic
+
+  NotificationsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Routes Personalize Monitor notifications to notification SNS topic
+      EventPattern:
+        source:
+          - personalize.monitor
+        detail-type:
+          - PersonalizeCampaignMinProvisionedTPSUpdated
+          - PersonalizeCampaignDeleted
+      State: ENABLED
+      Targets:
+        - Arn: !Ref NotificationsTopic
+          Id: PersonalizeMonitorNotificationsId
+          InputTransformer:
+            InputPathsMap:
+              reason: "$.detail.Reason"
+              resources: "$.resources"
+              type: "$.detail-type"
+            InputTemplate: |
+              "Amazon Personalize monitor notification:"
+              ""
+              "Message type: <type>"
+              "Resource(s): <resources>"
+              "Reason: <reason>"
+
+  CommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      ContentUri: src/layer
+      CompatibleRuntimes:
+        - python3.8
+    Metadata:
+      BuildMethod: python3.8
+
+  MonitorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Amazon Personalize monitor function that updates custom CloudWatch metrics and monitors campaign utilization every 5 minutes
+      Timeout: 30
+      CodeUri: src/personalize_monitor_function
+      Handler: personalize_monitor.lambda_handler
+      Layers:
+        - !Ref CommonLayer
+      Policies:
+        - Statement:
+          - Sid: PersonalizePolicy
+            Effect: Allow
+            Action:
+              - personalize:DescribeCampaign
+              - personalize:DescribeSolutionVersion
+              - personalize:ListCampaigns
+            Resource: '*'
+          - Sid: CloudWatchPolicy
+            Effect: Allow
+            Action:
+              - cloudwatch:DescribeAlarmsForMetric
+              - cloudwatch:DisableAlarmActions
+              - cloudwatch:EnableAlarmActions
+              - cloudwatch:GetMetricData
+              - cloudwatch:PutMetricAlarm
+              - cloudwatch:PutMetricData
+            Resource: '*'
+          - Sid: EventBridgePolicy
+            Effect: Allow
+            Action:
+              - events:PutEvents
+            Resource: '*'
+      Events:
+        ScheduledEvent:
+          Type: Schedule
+          Properties:
+            Description: Triggers primary Personalize Monitor monitoring logic
+            Schedule: cron(0/5 * * * ? *)
+            Enabled: True
+      Environment:
+        Variables:
+          CampaignARNs: !Ref CampaignARNs
+          Regions: !Ref Regions
+          NotificationsTopic: !Ref NotificationsTopic
+          AutoCreateCampaignUtilizationAlarms: !Ref AutoCreateCampaignUtilizationAlarms
+          CampaignThresholdAlarmLowerBound: !Ref CampaignThresholdAlarmLowerBound
+          AutoCreateIdleCampaignAlarms: !Ref AutoCreateIdleCampaignAlarms
+          IdleCampaignThresholdHours: !Ref IdleCampaignThresholdHours
+          AutoDeleteIdleCampaigns: !Ref AutoDeleteIdleCampaigns
+          AutoAdjustCampaignMinProvisionedTPS: !Ref AutoAdjustCampaignMinProvisionedTPS
+
+  DashboardManagementFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Amazon Personalize monitor function that updates the CloudWatch dashboard hourly and when campaigns are added/deleted
+      Timeout: 15
+      CodeUri: src/dashboard_mgmt_function
+      Handler: dashboard_mgmt.lambda_handler
+      AutoPublishAlias: live
+      Layers:
+        - !Ref CommonLayer
+      Policies:
+        - Statement:
+          - Sid: PersonalizePolicy
+            Effect: Allow
+            Action:
+              - personalize:DescribeCampaign
+              - personalize:DescribeDatasetGroup
+              - personalize:DescribeSolutionVersion
+              - personalize:ListCampaigns
+            Resource: '*'
+          - Sid: DashboardPolicy
+            Effect: Allow
+            Action:
+              - cloudwatch:DeleteDashboards
+              - cloudwatch:PutDashboard
+            Resource: '*'
+      Environment:
+        Variables:
+          CampaignARNs: !Ref CampaignARNs
+          Regions: !Ref Regions
+      Events:
+        EBRule:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - personalize.monitor
+              detail-type:
+                - BuildPersonalizeMonitorDashboard
+        ScheduledEvent:
+          Type: Schedule
+          Properties:
+            Description: Hourly rebuild of Personalize Monitor CloudWatch dashboard
+            Schedule: cron(3 * * * ? *)
+            Enabled: True
+
+  DeployDashboardCustomResource:
+    Type: Custom::DashboardCreate
+    Properties:
+      ServiceToken: !GetAtt DashboardManagementFunction.Arn
+      CampaignARNs: !Ref CampaignARNs
+      Regions: !Ref Regions
+      NotificationsTopic: !Ref NotificationsTopic
+      AutoCreateCampaignUtilizationAlarms: !Ref AutoCreateCampaignUtilizationAlarms
+      CampaignThresholdAlarmLowerBound: !Ref CampaignThresholdAlarmLowerBound
+      AutoCreateIdleCampaignAlarms: !Ref AutoCreateIdleCampaignAlarms
+      IdleCampaignThresholdHours: !Ref IdleCampaignThresholdHours
+      AutoDeleteIdleCampaigns: !Ref AutoDeleteIdleCampaigns
+      AutoAdjustCampaignMinProvisionedTPS: !Ref AutoAdjustCampaignMinProvisionedTPS
+
+  UpdateCampaignTPSFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Amazon Personalize monitor function that updates the minProvisionedTPS for a campaign in response to an event
+      CodeUri: src/personalize_update_campaign_tps_function
+      Handler: personalize_update_campaign_tps.lambda_handler
+      Layers:
+        - !Ref CommonLayer
+      Policies:
+        - Statement:
+          - Sid: PersonalizePolicy
+            Effect: Allow
+            Action:
+              - personalize:UpdateCampaign
+            Resource: '*'
+          - Sid: EventBridgePolicy
+            Effect: Allow
+            Action:
+              - events:PutEvents
+            Resource: '*'
+      Events:
+        EBRule:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - personalize.monitor
+              detail-type:
+                - UpdatePersonalizeCampaignMinProvisionedTPS
+
+  DeleteCampaignFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Amazon Personalize monitor function that deletes a campaign in response to an event
+      CodeUri: src/personalize_delete_campaign_function
+      Handler: personalize_delete_campaign.lambda_handler
+      Layers:
+        - !Ref CommonLayer
+      Policies:
+        - Statement:
+          - Sid: PersonalizePolicy
+            Effect: Allow
+            Action:
+              - personalize:DeleteCampaign
+            Resource: '*'
+          - Sid: EventBridgePolicy
+            Effect: Allow
+            Action:
+              - events:PutEvents
+            Resource: '*'
+          - Sid: CloudWatchFindAlarmsPolicy
+            Effect: Allow
+            Action:
+              - cloudwatch:DescribeAlarms
+              - cloudwatch:ListTagsForResource
+            Resource: '*'
+          - Sid: CloudWatchDeletePolicy
+            Effect: Allow
+            Action:
+              - cloudwatch:DeleteAlarms
+            Resource: !Sub 'arn:aws:cloudwatch:*:${AWS::AccountId}:alarm:PersonalizeMonitor-*'
+      Events:
+        EBCustomRule:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - personalize.monitor
+              detail-type:
+                - DeletePersonalizeCampaign
+
+  CleanupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Amazon Personalize monitor custom resource function that cleans up directly created resources when the application is deleted
+      Timeout: 15
+      CodeUri: src/cleanup_resources_function
+      Handler: cleanup_resources.lambda_handler
+      AutoPublishAlias: live
+      Layers:
+        - !Ref CommonLayer
+      Policies:
+        - Statement:
+          - Sid: PersonalizePolicy
+            Effect: Allow
+            Action:
+              - personalize:ListCampaigns
+            Resource: '*'
+          - Sid: CloudWatchFindAlarmsPolicy
+            Effect: Allow
+            Action:
+              - cloudwatch:DescribeAlarms
+              - cloudwatch:ListTagsForResource
+            Resource: '*'
+          - Sid: CloudWatchDeletePolicy
+            Effect: Allow
+            Action:
+              - cloudwatch:DeleteAlarms
+            Resource: !Sub 'arn:aws:cloudwatch:*:${AWS::AccountId}:alarm:PersonalizeMonitor-*'
+      Environment:
+        Variables:
+          CampaignARNs: !Ref CampaignARNs
+          Regions: !Ref Regions
+
+  CleanupCustomResource:
+    Type: Custom::Cleanup
+    Properties:
+      ServiceToken: !GetAtt CleanupFunction.Arn
+      CampaignARNs: !Ref CampaignARNs
+      Regions: !Ref Regions
+      NotificationsTopic: !Ref NotificationsTopic
+      AutoCreateCampaignUtilizationAlarms: !Ref AutoCreateCampaignUtilizationAlarms
+      CampaignThresholdAlarmLowerBound: !Ref CampaignThresholdAlarmLowerBound
+      AutoCreateIdleCampaignAlarms: !Ref AutoCreateIdleCampaignAlarms
+      IdleCampaignThresholdHours: !Ref IdleCampaignThresholdHours
+      AutoDeleteIdleCampaigns: !Ref AutoDeleteIdleCampaigns
+      AutoAdjustCampaignMinProvisionedTPS: !Ref AutoAdjustCampaignMinProvisionedTPS
+
+Outputs:
+  MonitorFunction:
+    Description: "Personalize monitor Function ARN"
+    Value: !GetAtt MonitorFunction.Arn
+
+  DashboardManagementFunction:
+    Description: "CloudWatch Dashboard Management Function ARN"
+    Value: !GetAtt DashboardManagementFunction.Arn
+
+  UpdateCampaignTPSFunction:
+    Description: "Update Personalize Campaign minProvisionedTPS Function ARN"
+    Value: !GetAtt UpdateCampaignTPSFunction.Arn
+
+  DeleteCampaignFunction:
+    Description: "Delete Personalize Campaign Function ARN"
+    Value: !GetAtt DeleteCampaignFunction.Arn
+
+  NotificationsTopic:
+    Description: "Notification SNS Topic ARN"
+    Value: !Ref NotificationsTopic
