@@ -10,7 +10,7 @@ Metadata:
       Creates a CloudWatch dashboard for monitoring the utilization of Amazon Personalize
       campaigns, creates CloudWatch alarms based on a user-defined threshold, and
       includes automated cost optimization actions.
-    Author: AWS
+    Author: AWS Applied AI
     SpdxLicenseId: MIT-0
     LicenseUrl: LICENSE
     ReadmeUrl: README-SAR.md
