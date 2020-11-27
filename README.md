@@ -11,8 +11,8 @@
 		* [Over-provisioned campaigns](#Over-provisionedcampaigns)
 * [Architecture](#Architecture)
 * [Installing the application](#Installingtheapplication)
-	* [Option 1: Install from Serverless Application Repository](#Option1:InstallfromServerlessApplicationRepository)
-	* [Option 2: Install using Serverless Application Model](#Option2:InstallusingServerlessApplicationModel)
+	* [Option 1 - Install from Serverless Application Repository](#Option1-InstallfromServerlessApplicationRepository)
+	* [Option 2 - Install using Serverless Application Model](#Option2-InstallusingServerlessApplicationModel)
 	* [Application settings/parameters](#Applicationsettingsparameters)
 * [Uninstalling the application](#Uninstallingtheapplication)
 * [FAQs](#FAQs)
@@ -93,14 +93,14 @@ See the readme pages for each function for details on the events that they produ
 
 ***IMPORTANT NOTE:** Deploying this application in your AWS account will create and consume AWS resources, which will cost money. For example, the CloudWatch dashboard, the Lambda function that collects additional monitoring metrics is run every 5 minutes, CloudWatch alarms, logging, and so on. Therefore, if after installing this application you choose not to use it as part of your monitoring strategy, be sure to follow the Uninstall instructions below to clean up all resources and avoid ongoing charges.*
 
-### <a name='Option1:InstallfromServerlessApplicationRepository'></a>Option 1: Install from Serverless Application Repository
+### <a name='Option1-InstallfromServerlessApplicationRepository'></a>Option 1 - Install from Serverless Application Repository
 
 The easiest way to deploy this application is from the [Serverless Application Repository](https://aws.amazon.com/serverless/serverlessrepo/) (SAR).
 
 1. Within the AWS account where you wish to deploy the application, browse to the [application's page](https://serverlessrepo.aws.amazon.com/applications/arn:aws:serverlessrepo:us-east-1:316031960777:applications~Amazon-Personalize-Monitor) in the Serverless Application Repository and click **"Deploy"**.
 2. Enter/update values in the **"Application settings"** panel (described below) and click **"Deploy"** again.
 
-### <a name='Option2:InstallusingServerlessApplicationModel'></a>Option 2: Install using Serverless Application Model
+### <a name='Option2-InstallusingServerlessApplicationModel'></a>Option 2 - Install using Serverless Application Model
 
 If you'd rather install the application manually, you can use the AWS [Serverless Application Model](https://aws.amazon.com/serverless/sam/) (SAM) CLI to build and  deploy the application into your AWS account.
 
