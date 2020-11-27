@@ -19,7 +19,7 @@
 		"width": 20,
 		"height": 4,
 		"properties": {
-			"markdown": "\n## Amazon Personalize Monitor Dashboard\n*This dashboard and its widgets were created and managed via the [Personalize Monitor](https://github.com/aws-samples/amazon-personalize-samples/) application.*\n\nFor best practices on integrating with and operating [Amazon Personalize](https://aws.amazon.com/personalize/), please see our [Cheat Sheet](https://github.com/aws-samples/amazon-personalize-samples/blob/master/PersonalizeCheatSheet2.0.md).\n\nResources: [Service Documentation](https://docs.aws.amazon.com/personalize/latest/dg/what-is-personalize.html) | [Personalize Blog](https://aws.amazon.com/blogs/machine-learning/category/artificial-intelligence/amazon-personalize/) | [Samples on GitHub](https://github.com/aws-samples/amazon-personalize-samples)\n"
+			"markdown": "\n## Amazon Personalize Monitor Dashboard\n*This dashboard and its widgets were created and managed via the [Personalize Monitor](https://github.com/aws-samples/amazon-personalize-monitor) application.*\n\nFor best practices on integrating with and operating [Amazon Personalize](https://aws.amazon.com/personalize/), please see our [Cheat Sheet](https://github.com/aws-samples/amazon-personalize-samples/blob/master/PersonalizeCheatSheet2.0.md).\n\nResources: [Service Documentation](https://docs.aws.amazon.com/personalize/latest/dg/what-is-personalize.html) | [Personalize Blog](https://aws.amazon.com/blogs/machine-learning/category/artificial-intelligence/amazon-personalize/) | [Samples on GitHub](https://github.com/aws-samples/amazon-personalize-samples)\n"
 		}
 	}
 	{{#dataset_groups}}
@@ -46,7 +46,7 @@
 				}]{{^last_campaign}}, {{/last_campaign}}
 				{{/campaigns}}
 			],
-			"region": "{{region}}", 
+			"region": "{{region}}",
 			"view": "timeSeries",
 			"stacked": false,
 			"stat": "Average",
@@ -85,7 +85,7 @@
 				}]{{^last_campaign}}, {{/last_campaign}}
 				{{/campaigns}}
 			],
-			"region": "{{region}}", 
+			"region": "{{region}}",
 			"title": "Campaign Utilization"
 		}
 	},
@@ -103,7 +103,7 @@
 				}]{{^last_campaign}}, {{/last_campaign}}
 				{{/campaigns}}
 			],
-			"region": "{{region}}", 
+			"region": "{{region}}",
 			"title": "Campaign Latency"
 		}
 	}

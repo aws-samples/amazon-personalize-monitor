@@ -10,13 +10,13 @@ Metadata:
       Creates a CloudWatch dashboard for monitoring the utilization of Amazon Personalize
       campaigns, creates CloudWatch alarms based on a user-defined threshold, and
       includes automated cost optimization actions.
-    Author: AWS Applied AI
+    Author: AWS Applied AI - Personalize
     SpdxLicenseId: MIT-0
     LicenseUrl: LICENSE
     ReadmeUrl: README-SAR.md
     Labels: ['Personalize', 'CloudWatch', 'Monitoring']
     HomePageUrl: https://github.com/aws-samples/amazon-personalize-monitor
-    SemanticVersion: 1.0.0
+    SemanticVersion: 1.0.1
     SourceCodeUrl: https://github.com/aws-samples/amazon-personalize-monitor
 
   AWS::CloudFormation::Interface:
