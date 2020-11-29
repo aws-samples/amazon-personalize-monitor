@@ -1,2 +1,1 @@
-aws-lambda-powertools==1.6.1
-crhelper==2.0.6
+# Dependencies bundled in layer
