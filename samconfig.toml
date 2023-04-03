@@ -4,5 +4,7 @@ version = 0.1
 [default.deploy.parameters]
 stack_name = "personalize-monitor"
 s3_prefix = "personalize-monitor"
-parameter_overrides = "CampaignARNs=\"all\" AutoCreateCampaignUtilizationAlarms=\"Yes\" CampaignThresholdAlarmLowerBound=\"100\" AutoCreateIdleCampaignAlarms=\"Yes\""
+parameter_overrides = "CampaignARNs=\"all\" RecommenderARNs=\"all\" AutoCreateUtilizationAlarms=\"Yes\" UtilizationThresholdAlarmLowerBound=\"100\" AutoAdjustMinTPS=\"Yes\" AutoCreateIdleAlarms=\"Yes\" IdleThresholdHours=\"24\" AutoDeleteOrStopIdleResources=\"No\""
 capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+image_repositories = []

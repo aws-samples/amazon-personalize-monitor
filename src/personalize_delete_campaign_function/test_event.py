@@ -15,7 +15,7 @@ event_bridge.put_events(
             'Resources': [ campaign_arn ],
             'DetailType': 'PersonalizeCampaignDeleted',
             'Detail': json.dumps({
-                'CampaignARN': campaign_arn,
+                'ARN': campaign_arn,
                 'Reason': reason
             })
         }

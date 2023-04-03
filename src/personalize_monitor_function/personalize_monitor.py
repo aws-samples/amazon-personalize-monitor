@@ -3,19 +3,19 @@
 
 """Lambda function that records Personalize resource metrics
 
-Lambda function designed to be called every five minutes to record campaign TPS 
-utilization metrics in CloudWatch. The metrics are used for alarms and on the 
-CloudWatch dashboard created by this application.
+Lambda function designed to be called every five minutes to record campaign TPS
+utilization metrics and recommender RRPS in CloudWatch. The metrics are used for
+alarms and on the CloudWatch dashboard created by this application.
 """
 
 import json
-import boto3
 import os
 import datetime
 import sys
 import math
+import logging
 
-from botocore.exceptions import ClientError
+from typing import Dict
 from aws_lambda_powertools import Logger
 
 from common import (
@@ -23,48 +23,57 @@ from common import (
     ALARM_NAME_PREFIX,
     extract_region,
     get_client,
-    determine_campaign_arns,
     get_configured_active_campaigns,
+    get_configured_active_recommenders,
     put_event
 )
 
 logger = Logger()
 
 MAX_METRICS_PER_CALL = 20
-MIN_IDLE_CAMPAIGN_THRESHOLD_HOURS = 1
+MIN_IDLE_THRESHOLD_HOURS = 1
 
 ALARM_PERIOD_SECONDS = 300
-ALARM_NAME_PREFIX_LOW_UTILIZATION = ALARM_NAME_PREFIX + 'LowCampaignUtilization-'
-ALARM_NAME_PREFIX_IDLE = ALARM_NAME_PREFIX + 'IdleCampaign-'
+ALARM_NAME_PREFIX_LOW_CAMPAIGN_UTILIZATION = ALARM_NAME_PREFIX + 'LowCampaignUtilization-'
+ALARM_NAME_PREFIX_LOW_RECOMMENDER_UTILIZATION = ALARM_NAME_PREFIX + 'LowRecommenderUtilization-'
+ALARM_NAME_PREFIX_IDLE_CAMPAIGN = ALARM_NAME_PREFIX + 'IdleCampaign-'
+ALARM_NAME_PREFIX_IDLE_RECOMMENDER = ALARM_NAME_PREFIX + 'IdleRecommender-'
 
-def get_campaign_recipe_arn(campaign):
-    recipe_arn = campaign.get('recipeArn')
-    if not recipe_arn:
-        campaign_region = extract_region(campaign['campaignArn'])
+def get_recipe_arn(resource: Dict):
+    recipe_arn = resource.get('recipeArn')
+    if not recipe_arn and 'campaignArn' in resource:
+        campaign_region = extract_region(resource['campaignArn'])
         personalize = get_client('personalize', campaign_region)
 
-        response = personalize.describe_solution_version(solutionVersionArn = campaign['solutionVersionArn'])
+        response = personalize.describe_solution_version(solutionVersionArn = resource['solutionVersionArn'])
 
         recipe_arn = response['solutionVersion']['recipeArn']
-        campaign['recipeArn'] = recipe_arn
+        resource['recipeArn'] = recipe_arn
 
     return recipe_arn
 
-def get_campaign_inference_metric_name(campaign):
+def get_inference_metric_name(resource):
     metric_name = 'GetRecommendations'
-    if get_campaign_recipe_arn(campaign) == 'arn:aws:personalize:::recipe/aws-personalized-ranking':
+    if 'campaignArn' in resource and get_recipe_arn(resource) == 'arn:aws:personalize:::recipe/aws-personalized-ranking':
         metric_name = 'GetPersonalizedRanking'
 
     return metric_name
 
-def get_campaign_sum_requests_datapoints(campaign, start_time, end_time, period):
-    campaign_region = extract_region(campaign['campaignArn'])
-    cw = get_client(service_name = 'cloudwatch', region_name = campaign_region)
+def get_sum_requests_datapoints(resource, start_time, end_time, period):
+    if 'campaignArn' in resource:
+        arn_key = 'campaignArn'
+        dim_name = 'CampaignArn'
+    else:
+        arn_key = 'recommenderArn'
+        dim_name = 'RecommenderArn'
 
-    metric_name = get_campaign_inference_metric_name(campaign)
+    resource_region = extract_region(resource[arn_key])
+    cw = get_client(service_name = 'cloudwatch', region_name = resource_region)
+
+    metric_name = get_inference_metric_name(resource)
 
     response = cw.get_metric_data(
-        MetricDataQueries = [ 
+        MetricDataQueries = [
             {
                 'Id': 'm1',
                 'MetricStat': {
@@ -73,8 +82,8 @@ def get_campaign_sum_requests_datapoints(campaign, start_time, end_time, period)
                         'MetricName': metric_name,
                         'Dimensions': [
                             {
-                                'Name': 'CampaignArn',
-                                'Value': campaign['campaignArn']
+                                'Name': dim_name,
+                                'Value': resource[arn_key]
                             }
                         ]
                     },
@@ -102,47 +111,51 @@ def get_campaign_sum_requests_datapoints(campaign, start_time, end_time, period)
 
     return datapoints
 
-def get_campaign_sum_requests_by_hour(campaign, start_time, end_time):
-    datapoints = get_campaign_sum_requests_datapoints(campaign, start_time, end_time, 3600)
+def get_sum_requests_by_hour(resource, start_time, end_time):
+    datapoints = get_sum_requests_datapoints(resource, start_time, end_time, 3600)
     return datapoints
 
-def get_campaign_total_requests(campaign, start_time, end_time, period):
-    datapoints = get_campaign_sum_requests_datapoints(campaign, start_time, end_time, period)
+def get_total_requests(resource, start_time, end_time, period):
+    datapoints = get_sum_requests_datapoints(resource, start_time, end_time, period)
 
     sum_requests = 0
     if datapoints:
         for datapoint in datapoints:
             sum_requests += datapoint['Value']
-        
+
     return sum_requests
 
-def get_campaign_average_tps(campaign, start_time, end_time, period = ALARM_PERIOD_SECONDS):
-    sum_requests = get_campaign_total_requests(campaign, start_time, end_time, period)
+def get_average_tps(resource, start_time, end_time, period = ALARM_PERIOD_SECONDS):
+    sum_requests = get_total_requests(resource, start_time, end_time, period)
     return sum_requests / period
 
-def get_campaign_age_hours(campaign):
-    diff = datetime.datetime.now(datetime.timezone.utc) - campaign['creationDateTime']
+def get_age_hours(resource):
+    diff = datetime.datetime.now(datetime.timezone.utc) - resource['creationDateTime']
     days, seconds = diff.days, diff.seconds
 
     hours_age = days * 24 + seconds // 3600
     return hours_age
 
-def get_campaign_last_update_age_hours(campaign):
+def get_last_update_age_hours(resource):
     hours_age = None
-    if campaign.get('lastUpdatedDateTime'):
-        diff = datetime.datetime.now(datetime.timezone.utc) - campaign['lastUpdatedDateTime']
+    if resource.get('lastUpdatedDateTime'):
+        diff = datetime.datetime.now(datetime.timezone.utc) - resource['lastUpdatedDateTime']
         days, seconds = diff.days, diff.seconds
 
         hours_age = days * 24 + seconds // 3600
     return hours_age
 
-def is_campaign_updatable(campaign):
-    status = campaign['status']
+def is_resource_updatable(resource):
+    status = resource['status']
     updatable = status == 'ACTIVE' or status == 'CREATE FAILED'
 
-    if updatable and campaign.get('latestCampaignUpdate'):
-        status = campaign['latestCampaignUpdate']['status']
-        updatable = status == 'ACTIVE' or status == 'CREATE FAILED'
+    if updatable:
+        if resource.get('latestCampaignUpdate'):
+            status = resource['latestCampaignUpdate']['status']
+            updatable = status == 'ACTIVE' or status == 'CREATE FAILED'
+        elif resource.get('latestRecommenderUpdate'):
+            status = resource['latestRecommenderUpdate']['status']
+            updatable = status == 'ACTIVE' or status == 'CREATE FAILED'
 
     return updatable
 
@@ -151,7 +164,7 @@ def put_metrics(client, metric_datas):
         'Namespace': PROJECT_NAME,
         'MetricData': metric_datas
     }
-    
+
     client.put_metric_data(**metric)
     logger.debug('Put data for %d metrics', len(metric_datas))
 
@@ -164,31 +177,46 @@ def append_metric(metric_datas_by_region, region, metric):
 
     metric_datas.append(metric)
 
-def create_utilization_alarm(campaign_region, campaign, utilization_threshold_lower_bound):
-    cw = get_client(service_name = 'cloudwatch', region_name = campaign_region)
+def create_utilization_alarm(resource_region, resource, utilization_threshold_lower_bound):
+    cw = get_client(service_name = 'cloudwatch', region_name = resource_region)
+
+    if 'campaignArn' in resource:
+        metric_name = 'campaignUtilization'
+        arn_key = 'campaignArn'
+        dim_name = 'CampaignArn'
+        alarm_prefix = ALARM_NAME_PREFIX_LOW_CAMPAIGN_UTILIZATION
+        # Only enable alarm actions when minTPS > 1 since we can't really do
+        # anything to impact utilization by dropping minTPS. Let the idle
+        # alarm handle abandoned campaigns/recommenders.
+        enable_actions = resource['minProvisionedTPS'] > 1
+    else:
+        metric_name = 'recommenderUtilization'
+        arn_key = 'recommenderArn'
+        dim_name = 'RecommenderArn'
+        alarm_prefix = ALARM_NAME_PREFIX_LOW_RECOMMENDER_UTILIZATION
+        # Only enable alarm actions when minRPS > 1 since we can't really do
+        # anything to impact utilization by dropping minTPS. Let the idle
+        # alarm handle abandoned campaigns/recommenders.
+        enable_actions = resource['recommenderConfig']['minRecommendationRequestsPerSecond'] > 1
 
     response = cw.describe_alarms_for_metric(
-        MetricName = 'campaignUtilization',
+        MetricName = metric_name,
         Namespace = PROJECT_NAME,
         Dimensions=[
             {
-                'Name': 'CampaignArn',
-                'Value': campaign['campaignArn']
+                'Name': dim_name,
+                'Value': resource[arn_key]
             },
         ]
     )
 
-    alarm_name = ALARM_NAME_PREFIX_LOW_UTILIZATION + campaign['name']
+    alarm_name = alarm_prefix + resource['name']
 
     low_utilization_alarm_exists = False
-    # Only enable alarm actions when minTPS > 1 since we can't really do 
-    # anything to impact utilization by dropping minTPS. Let the idle 
-    # campaign alarm handle abandoned campaigns. 
-    enable_actions = campaign['minProvisionedTPS'] > 1
     actions_currently_enabled = False
 
     for alarm in response['MetricAlarms']:
-        if (alarm['AlarmName'].startswith(ALARM_NAME_PREFIX_LOW_UTILIZATION) and
+        if (alarm['AlarmName'].startswith(alarm_prefix) and
                 alarm['ComparisonOperator'] in [ 'LessThanThreshold', 'LessThanOrEqualToThreshold' ]):
             alarm_name = alarm['AlarmName']
             low_utilization_alarm_exists = True
@@ -198,23 +226,23 @@ def create_utilization_alarm(campaign_region, campaign, utilization_threshold_lo
     alarm_created = False
 
     if not low_utilization_alarm_exists:
-        logger.info('Creating lower bound utilization alarm for %s', campaign['campaignArn'])
+        logger.info('Creating lower bound utilization alarm for %s', resource[arn_key])
 
         topic_arn = os.environ['NotificationsTopic']
 
         cw.put_metric_alarm(
             AlarmName = alarm_name,
-            AlarmDescription = 'Alarms when campaign utilization falls below threashold indicating possible over provisioning condition',
+            AlarmDescription = 'Alarms when utilization falls below threshold indicating possible over provisioning condition',
             ActionsEnabled = enable_actions,
             OKActions = [ topic_arn ],
             AlarmActions = [ topic_arn ],
-            MetricName = 'campaignUtilization',
+            MetricName = metric_name,
             Namespace = PROJECT_NAME,
             Statistic = 'Average',
             Dimensions = [
                 {
-                    'Name': 'CampaignArn',
-                    'Value': campaign['campaignArn']
+                    'Name': dim_name,
+                    'Value': resource[arn_key]
                 }
             ],
             Period = ALARM_PERIOD_SECONDS,
@@ -241,34 +269,43 @@ def create_utilization_alarm(campaign_region, campaign, utilization_threshold_lo
 
     return alarm_created
 
-def create_idle_campaign_alarm(campaign_region, campaign, idle_campaign_threshold_hours):
-    cw = get_client(service_name = 'cloudwatch', region_name = campaign_region)
+def create_idle_resource_alarm(resource_region, resource, idle_threshold_hours):
+    cw = get_client(service_name = 'cloudwatch', region_name = resource_region)
     topic_arn = os.environ['NotificationsTopic']
 
-    metric_name = get_campaign_inference_metric_name(campaign)
+    metric_name = get_inference_metric_name(resource)
+
+    if 'campaignArn' in resource:
+        arn_key = 'campaignArn'
+        dim_name = 'CampaignArn'
+        alarm_prefix = ALARM_NAME_PREFIX_IDLE_CAMPAIGN
+    else:
+        arn_key = 'recommenderArn'
+        dim_name = 'RecommenderArn'
+        alarm_prefix = ALARM_NAME_PREFIX_IDLE_RECOMMENDER
 
     response = cw.describe_alarms_for_metric(
         MetricName = metric_name,
         Namespace = 'AWS/Personalize',
         Dimensions=[
             {
-                'Name': 'CampaignArn',
-                'Value': campaign['campaignArn']
+                'Name': dim_name,
+                'Value': resource[arn_key]
             },
         ]
     )
 
-    alarm_name = ALARM_NAME_PREFIX_IDLE + campaign['name']
+    alarm_name = alarm_prefix + resource['name']
 
     idle_alarm_exists = False
-    # Only enable actions when the campaign has existed at least as long as 
-    # the idle threshold. This is necessary since the alarm treats missing 
+    # Only enable actions when the campaign/recommender has existed at least as
+    # long as the idle threshold. This is necessary since the alarm treats missing
     # data as breaching.
-    enable_actions = get_campaign_age_hours(campaign) >= idle_campaign_threshold_hours
+    enable_actions = get_age_hours(resource) >= idle_threshold_hours
     actions_currently_enabled = False
 
     for alarm in response['MetricAlarms']:
-        if (alarm['AlarmName'].startswith(ALARM_NAME_PREFIX_IDLE) and
+        if (alarm['AlarmName'].startswith(alarm_prefix) and
                 alarm['ComparisonOperator'] == 'LessThanOrEqualToThreshold' and
                 int(alarm['Threshold']) == 0):
             alarm_name = alarm['AlarmName']
@@ -279,11 +316,11 @@ def create_idle_campaign_alarm(campaign_region, campaign, idle_campaign_threshol
     alarm_created = False
 
     if not idle_alarm_exists:
-        logger.info('Creating idle utilization alarm for %s', campaign['campaignArn'])
+        logger.info('Creating idle utilization alarm for %s', resource[arn_key])
 
         cw.put_metric_alarm(
             AlarmName = alarm_name,
-            AlarmDescription = 'Alarms when campaign utilization is idle for continguous length of time indicating potential abandoned campaign',
+            AlarmDescription = 'Alarms when utilization is idle for continguous length of time indicating potential abandoned campaign/recommender',
             ActionsEnabled = enable_actions,
             OKActions = [ topic_arn ],
             AlarmActions = [ topic_arn ],
@@ -292,12 +329,12 @@ def create_idle_campaign_alarm(campaign_region, campaign, idle_campaign_threshol
             Statistic = 'Sum',
             Dimensions = [
                 {
-                    'Name': 'CampaignArn',
-                    'Value': campaign['campaignArn']
+                    'Name': dim_name,
+                    'Value': resource[arn_key]
                 }
             ],
             Period = ALARM_PERIOD_SECONDS,
-            EvaluationPeriods = int(((60 * 60) / ALARM_PERIOD_SECONDS) * idle_campaign_threshold_hours),
+            EvaluationPeriods = int(((60 * 60) / ALARM_PERIOD_SECONDS) * idle_threshold_hours),
             Threshold = 0,
             ComparisonOperator = 'LessThanOrEqualToThreshold',
             TreatMissingData = 'breaching', # Won't get metric data for idle campaigns
@@ -319,61 +356,60 @@ def create_idle_campaign_alarm(campaign_region, campaign, idle_campaign_threshol
 
     return alarm_created
 
-def divide_chunks(l, n): 
-    for i in range(0, len(l), n):  
+def divide_chunks(l, n):
+    for i in range(0, len(l), n):
         yield l[i:i + n]
 
-def perform_hourly_checks(campaign_arn):
-    ''' Hashes campaign_arn across 10 minute intervals of the current hour so we spread out campaign hourly checks '''
+def perform_hourly_checks(resource_arn):
+    ''' Hashes resource_arn across 10 minute intervals of the current hour so we spread out hourly checks '''
     num_slots = 6  # 60 mins / 10
-    slot = sum(bytearray(campaign_arn.encode('utf-8'))) % num_slots
+    slot = sum(bytearray(resource_arn.encode('utf-8'))) % num_slots
     # Allow for match on first two minutes of 10 minute slot to account for CW event lag (assumes current schedule of every 5 mins).
     return datetime.datetime.now().minute in range(slot * 10, slot * 10 + 2)
 
 @logger.inject_lambda_context(log_event=True)
-def lambda_handler(event, context):
-    auto_create_utilization_alarms = event.get('AutoCreateCampaignUtilizationAlarms')
+def lambda_handler(event, _):
+    auto_create_utilization_alarms = event.get('AutoCreateUtilizationAlarms')
     if not auto_create_utilization_alarms:
-        auto_create_utilization_alarms = os.environ.get('AutoCreateCampaignUtilizationAlarms', 'yes').lower() in [ 'true', 'yes', '1' ]
+        auto_create_utilization_alarms = os.environ.get('AutoCreateUtilizationAlarms', 'yes').lower() in [ 'true', 'yes', '1' ]
 
-    utilization_threshold_lower_bound = event.get('CampaignThresholdAlarmLowerBound')
+    utilization_threshold_lower_bound = event.get('UtilizationThresholdAlarmLowerBound')
     if not utilization_threshold_lower_bound:
-        utilization_threshold_lower_bound = float(os.environ.get('CampaignThresholdAlarmLowerBound', '100.0'))
+        utilization_threshold_lower_bound = float(os.environ.get('UtilizationThresholdAlarmLowerBound', '100.0'))
 
-    auto_create_idle_alarms = event.get('AutoCreateIdleCampaignAlarms')
+    auto_create_idle_alarms = event.get('AutoCreateIdleAlarms')
     if not auto_create_idle_alarms:
-        auto_create_idle_alarms = os.environ.get('AutoCreateIdleCampaignAlarms', 'yes').lower() in [ 'true', 'yes', '1' ]
+        auto_create_idle_alarms = os.environ.get('AutoCreateIdleAlarms', 'yes').lower() in [ 'true', 'yes', '1' ]
 
-    auto_delete_idle_campaigns = event.get('AutoDeleteIdleCampaigns')
-    if not auto_delete_idle_campaigns:
-        auto_delete_idle_campaigns = os.environ.get('AutoDeleteIdleCampaigns', 'false').lower() in [ 'true', 'yes', '1' ]
+    auto_delete_idle_resources = event.get('AutoDeleteOrStopIdleResources')
+    if not auto_delete_idle_resources:
+        auto_delete_idle_resources = os.environ.get('AutoDeleteOrStopIdleResources', 'false').lower() in [ 'true', 'yes', '1' ]
 
-    idle_campaign_threshold_hours = event.get('IdleCampaignThresholdHours')
-    if not idle_campaign_threshold_hours:
-        idle_campaign_threshold_hours = int(os.environ.get('IdleCampaignThresholdHours', '24'))
+    idle_resource_threshold_hours = event.get('IdleThresholdHours')
+    if not idle_resource_threshold_hours:
+        idle_resource_threshold_hours = int(os.environ.get('IdleThresholdHours', '24'))
 
-    if idle_campaign_threshold_hours < MIN_IDLE_CAMPAIGN_THRESHOLD_HOURS:
-        raise ValueError(f'"IdleCampaignThresholdHours" must be >= {MIN_IDLE_CAMPAIGN_THRESHOLD_HOURS} hours')
+    if idle_resource_threshold_hours < MIN_IDLE_THRESHOLD_HOURS:
+        raise ValueError(f'"IdleThresholdHours" must be >= {MIN_IDLE_THRESHOLD_HOURS} hours')
 
-    auto_adjust_campaign_tps = event.get('AutoAdjustCampaignMinProvisionedTPS')
-    if not auto_adjust_campaign_tps:
-        auto_adjust_campaign_tps = os.environ.get('AutoAdjustCampaignMinProvisionedTPS', 'yes').lower() in [ 'true', 'yes', '1' ]
+    auto_adjust_min_tps = event.get('AutoAdjustMinTPS')
+    if not auto_adjust_min_tps:
+        auto_adjust_min_tps = os.environ.get('AutoAdjustMinTPS', 'yes').lower() in [ 'true', 'yes', '1' ]
 
     campaigns = get_configured_active_campaigns(event)
-    
-    logger.info('Retrieving minProvisionedTPS for %d active campaigns', len(campaigns))
+    recommenders = get_configured_active_recommenders(event)
 
     current_region = os.environ['AWS_REGION']
-    
+
     metric_datas_by_region = {}
 
     append_metric(metric_datas_by_region, current_region, {
-        'MetricName': 'monitoredCampaignCount',
-        'Value': len(campaigns),
+        'MetricName': 'monitoredResourceCount',
+        'Value': len(campaigns) + len(recommenders),
         'Unit': 'Count'
     })
-    
-    campaign_metrics_written = 0
+
+    resource_metrics_written = 0
     all_metrics_written = 0
     alarms_created = 0
 
@@ -382,131 +418,144 @@ def lambda_handler(event, context):
     end_time = end_time.replace(microsecond=0,second=0, minute=end_time.minute - end_time.minute % 5)
     start_time = end_time - datetime.timedelta(minutes=5)
 
-    for campaign in campaigns:
-        campaign_arn = campaign['campaignArn']
-        campaign_region = extract_region(campaign_arn)
+    logger.info('Retrieving minProvisionedTPS for %d active campaigns', len(campaigns))
+    logger.info('Retrieving minRecommendationRequestsPerSecond for %d active recommenders', len(recommenders))
 
-        min_provisioned_tps = campaign['minProvisionedTPS']
-        
-        append_metric(metric_datas_by_region, campaign_region, {
-            'MetricName': 'minProvisionedTPS',
+    for resource in campaigns + recommenders:
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug('Resource: %s', json.dumps(resource, indent = 2, default = str))
+
+        is_campaign = 'campaignArn' in resource
+
+        resource_arn = resource['campaignArn'] if is_campaign else resource['recommenderArn']
+        resource_region = extract_region(resource_arn)
+
+        min_tps = resource['minProvisionedTPS'] if is_campaign else resource['recommenderConfig']['minRecommendationRequestsPerSecond']
+
+        append_metric(metric_datas_by_region, resource_region, {
+            'MetricName': 'minProvisionedTPS' if is_campaign else 'minRecommendationRequestsPerSecond',
             'Dimensions': [
                 {
-                    'Name': 'CampaignArn',
-                    'Value': campaign_arn
+                    'Name': 'CampaignArn' if is_campaign else 'RecommenderArn',
+                    'Value': resource_arn
                 }
             ],
-            'Value': min_provisioned_tps,
+            'Value': min_tps,
             'Unit': 'Count/Second'
         })
-        
-        tps = get_campaign_average_tps(campaign, start_time, end_time)
+
+        tps = get_average_tps(resource, start_time, end_time)
         utilization = 0
 
         if tps:
-            append_metric(metric_datas_by_region, campaign_region, {
-                'MetricName': 'averageTPS',
+            append_metric(metric_datas_by_region, resource_region, {
+                'MetricName': 'averageTPS' if is_campaign else 'averageRPS',
                 'Dimensions': [
                     {
-                        'Name': 'CampaignArn',
-                        'Value': campaign_arn
+                        'Name': 'CampaignArn' if is_campaign else 'RecommenderArn',
+                        'Value': resource_arn
                     }
                 ],
                 'Value': tps,
                 'Unit': 'Count/Second'
             })
-            
-            utilization = tps / min_provisioned_tps * 100
 
-        append_metric(metric_datas_by_region, campaign_region, {
-            'MetricName': 'campaignUtilization',
+            utilization = tps / min_tps * 100
+
+        append_metric(metric_datas_by_region, resource_region, {
+            'MetricName': 'campaignUtilization' if is_campaign else 'recommenderUtilization',
             'Dimensions': [
                 {
-                    'Name': 'CampaignArn',
-                    'Value': campaign_arn
+                    'Name': 'CampaignArn' if is_campaign else 'RecommenderArn',
+                    'Value': resource_arn
                 }
             ],
             'Value': utilization,
             'Unit': 'Percent'
         })
-            
+
         logger.debug(
-            'Campaign %s has current minProvisionedTPS of %d and actual TPS of %s yielding %.2f%% utilization', 
-            campaign_arn, min_provisioned_tps, tps, utilization
+            'Resource %s has current minTPS of %d and actual TPS of %s yielding %.2f%% utilization',
+            resource_arn, min_tps, tps, utilization
         )
-        campaign_metrics_written += 1
+        resource_metrics_written += 1
 
-        # Only do idle campaign and minProvisionedTPS adjustment checks once per hour for each campaign.
-        perform_hourly_checks_this_run = perform_hourly_checks(campaign_arn)
+        # Only do idle resource and minTPS adjustment checks once per hour for each campaign/recommender.
+        perform_hourly_checks_this_run = perform_hourly_checks(resource_arn)
 
-        # Determine how old the campaign is and time since last update.
-        campaign_age_hours = get_campaign_age_hours(campaign)
-        campaign_update_age_hours = get_campaign_last_update_age_hours(campaign)
+        # Determine how old the resource is and time since last update.
+        resource_age_hours = get_age_hours(resource)
+        resource_update_age_hours = get_last_update_age_hours(resource)
 
-        campaign_delete_event_fired = False
+        resource_delete_stop_event_fired = False
 
-        if utilization == 0 and perform_hourly_checks_this_run and auto_delete_idle_campaigns:
-            # Campaign is currently idle. Let's see if it's old enough and not being updated recently.
+        if utilization == 0 and perform_hourly_checks_this_run and auto_delete_idle_resources:
+            # Resource is currently idle. Let's see if it's old enough and not being updated recently.
             logger.info(
-                'Performing idle delete check for campaign %s; campaign is %d hours old; last updated %s hours ago', 
-                campaign_arn, campaign_age_hours, campaign_update_age_hours
+                'Performing idle stop/delete check for %s; resource is %d hours old; last updated %s hours ago',
+                resource_arn, resource_age_hours, resource_update_age_hours
             )
 
-            if (campaign_age_hours >= idle_campaign_threshold_hours):
+            if (resource_age_hours >= idle_resource_threshold_hours):
 
-                # Campaign has been around long enough. Let's see how long it's been idle.
+                # Resource has been around long enough. Let's see how long it's been idle.
                 end_time_idle_check = datetime.datetime.now(datetime.timezone.utc)
-                start_time_idle_check = end_time_idle_check - datetime.timedelta(hours = idle_campaign_threshold_hours)
-                period_idle_check = idle_campaign_threshold_hours * 60 * 60
+                start_time_idle_check = end_time_idle_check - datetime.timedelta(hours = idle_resource_threshold_hours)
+                period_idle_check = idle_resource_threshold_hours * 60 * 60
 
-                total_requests = get_campaign_total_requests(campaign, start_time_idle_check, end_time_idle_check, period_idle_check)
+                total_requests = get_total_requests(resource, start_time_idle_check, end_time_idle_check, period_idle_check)
 
                 if total_requests == 0:
-                    if is_campaign_updatable(campaign):
-                        reason = f'Campaign {campaign_arn} has been idle for at least {idle_campaign_threshold_hours} hours so initiating delete according to configuration.'
+                    if is_resource_updatable(resource):
+                        if is_campaign:
+                            detail_type = 'DeletePersonalizeCampaign'
+                            reason = f'Campaign {resource_arn} has been idle for at least {idle_resource_threshold_hours} hours so initiating delete according to configuration.'
+                        else:
+                            detail_type = 'StopPersonalizeRecommender'
+                            reason = f'Recommender {resource_arn} has been idle for at least {idle_resource_threshold_hours} hours so initiating stop according to configuration.'
 
                         logger.info(reason)
 
                         put_event(
-                            detail_type = 'DeletePersonalizeCampaign',
+                            detail_type = detail_type,
                             detail = json.dumps({
-                                'CampaignARN': campaign_arn,
-                                'CampaignUtilization': utilization,
-                                'CampaignAgeHours': campaign_age_hours,
-                                'IdleCampaignThresholdHours': idle_campaign_threshold_hours,
+                                'ARN': resource_arn,
+                                'Utilization': utilization,
+                                'AgeHours': resource_age_hours,
+                                'IdleThresholdHours': idle_resource_threshold_hours,
                                 'TotalRequestsDuringIdleThresholdHours': total_requests,
                                 'Reason': reason
                             }),
-                            resources = [ campaign_arn ]
+                            resources = [ resource_arn ]
                         )
 
-                        campaign_delete_event_fired = True
+                        resource_delete_stop_event_fired = True
                     else:
                         logger.warn(
-                            'Campaign %s has been idle for at least %d hours but its status will not allow it to be deleted on this run', 
-                            campaign_arn, idle_campaign_threshold_hours
+                            'Resource %s has been idle for at least %d hours but its status will not allow it to be deleted/stopped on this run',
+                            resource_arn, idle_resource_threshold_hours
                         )
                 else:
                     logger.warn(
-                        'Campaign %s is currently idle but has had %d requests within the last %d hours so does not meet idle criteria for auto-deletion', 
-                        campaign_arn, total_requests, idle_campaign_threshold_hours
+                        'Resource %s is currently idle but has had %d requests within the last %d hours so does not meet idle criteria for auto-deletion/auto-stop',
+                        resource_arn, total_requests, idle_resource_threshold_hours
                     )
             else:
                 logger.info(
-                    'Campaign %s is only %d hours old and last update %s hours old; too new to consider for auto-deletion', 
-                    campaign_arn, campaign_age_hours, campaign_update_age_hours
+                    'Resource %s is only %d hours old and last update %s hours old; too new to consider for auto-deletion/auto-stop',
+                    resource_arn, resource_age_hours, resource_update_age_hours
                 )
 
-        if (not campaign_delete_event_fired and 
-                perform_hourly_checks_this_run and 
-                auto_adjust_campaign_tps and 
-                min_provisioned_tps > 1):
+        if (not resource_delete_stop_event_fired and
+                perform_hourly_checks_this_run and
+                auto_adjust_min_tps and
+                min_tps > 1):
 
             days_back = 14
             end_time_tps_check = datetime.datetime.now(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
             start_time_tps_check = end_time_tps_check - datetime.timedelta(days = days_back)
 
-            datapoints = get_campaign_sum_requests_by_hour(campaign, start_time_tps_check, end_time_tps_check)
+            datapoints = get_sum_requests_by_hour(resource, start_time_tps_check, end_time_tps_check)
             min_reqs = sys.maxsize
             max_reqs = total_reqs = total_avg_tps = min_avg_tps = max_avg_tps = 0
 
@@ -521,57 +570,57 @@ def lambda_handler(event, context):
                 max_avg_tps = int(max_reqs / 3600)
 
             logger.info(
-                'Performing minProvisionedTPS adjustment check for campaign %s; min/max/avg hourly TPS over last %d days for %d datapoints: %d/%d/%.2f', 
-                campaign_arn, days_back, len(datapoints), min_avg_tps, max_avg_tps, total_avg_tps
+                'Performing minTPS/minRPS adjustment check for %s; min/max/avg hourly TPS over last %d days for %d datapoints: %d/%d/%.2f',
+                resource_arn, days_back, len(datapoints), min_avg_tps, max_avg_tps, total_avg_tps
             )
 
             min_age_to_update_hours = 24
 
             age_eligible = True
 
-            if campaign_age_hours < min_age_to_update_hours:
+            if resource_age_hours < min_age_to_update_hours:
                 logger.info(
-                    'Campaign %s is less than %d hours old so not eligible for minProvisionedTPS adjustment yet', 
-                    campaign_arn, min_age_to_update_hours
+                    'Resource %s is less than %d hours old so not eligible for minTPS/minRPS adjustment yet',
+                    resource_arn, min_age_to_update_hours
                 )
                 age_eligible = False
 
-            if age_eligible and min_avg_tps < min_provisioned_tps:
-                # Incrementally drop minProvisionedTPS.
-                new_min_tps = max(1, int(math.floor(min_provisioned_tps * .75)))
+            if age_eligible and min_avg_tps < min_tps:
+                # Incrementally drop minTPS/minRPS.
+                new_min_tps = max(1, int(math.floor(min_tps * .75)))
 
-                if is_campaign_updatable(campaign):
-                    reason = f'Step down adjustment of minProvisionedTPS for campaign {campaign_arn} down from {min_provisioned_tps} to {new_min_tps} based on average hourly TPS low watermark of {min_avg_tps} over last {days_back} days'
+                if is_resource_updatable(resource):
+                    reason = f'Step down adjustment of minTPS/minRPS for {resource_arn} down from {min_tps} to {new_min_tps} based on average hourly TPS low watermark of {min_avg_tps} over last {days_back} days'
                     logger.info(reason)
 
                     put_event(
-                        detail_type = 'UpdatePersonalizeCampaignMinProvisionedTPS',
+                        detail_type = 'UpdatePersonalizeCampaignMinProvisionedTPS' if is_campaign else 'UpdatePersonalizeRecommenderMinRecommendationRPS',
                         detail = json.dumps({
-                            'CampaignARN': campaign_arn,
-                            'CampaignUtilization': utilization,
-                            'CampaignAgeHours': campaign_age_hours,
-                            'CurrentProvisionedTPS': min_provisioned_tps,
-                            'MinProvisionedTPS': new_min_tps,
+                            'ARN': resource_arn,
+                            'Utilization': utilization,
+                            'AgeHours': resource_age_hours,
+                            'CurrentMinTPS': min_tps,
+                            'NewMinTPS': new_min_tps,
                             'MinAverageTPS': min_avg_tps,
                             'MaxAverageTPS': max_avg_tps,
                             'Datapoints': datapoints,
                             'Reason': reason
                         }, default = str),
-                        resources = [ campaign_arn ]
+                        resources = [ resource_arn ]
                     )
                 else:
                     logger.warn(
-                        'Campaign %s could have its minProvisionedTPS adjusted down from %d to %d based on average hourly TPS low watermark over last %d days but its status will not allow it to be updated on this run', 
-                        campaign_arn, min_provisioned_tps, new_min_tps, days_back
+                        'Resource %s could have its minTPS/minRPS adjusted down from %d to %d based on average hourly TPS low watermark over last %d days but its status will not allow it to be updated on this run',
+                        resource_arn, min_tps, new_min_tps, days_back
                     )
 
-        if not campaign_delete_event_fired:
+        if not resource_delete_stop_event_fired:
             if auto_create_utilization_alarms:
-                if create_utilization_alarm(campaign_region, campaign, utilization_threshold_lower_bound):
+                if create_utilization_alarm(resource_region, resource, utilization_threshold_lower_bound):
                     alarms_created += 1
 
             if auto_create_idle_alarms:
-                if create_idle_campaign_alarm(campaign_region, campaign, idle_campaign_threshold_hours):
+                if create_idle_resource_alarm(resource_region, resource, idle_resource_threshold_hours):
                     alarms_created += 1
 
     for region, metric_datas in metric_datas_by_region.items():
@@ -583,7 +632,7 @@ def lambda_handler(event, context):
             put_metrics(cw, metrics_datas_chunk)
             all_metrics_written += len(metrics_datas_chunk)
 
-    outcome = f'Logged {all_metrics_written} TPS utilization metrics for {campaign_metrics_written} active campaigns; {alarms_created} alarms created'
+    outcome = f'Logged {all_metrics_written} TPS utilization metrics for {resource_metrics_written} active campaigns and recommenders; {alarms_created} alarms created'
     logger.info(outcome)
 
     if alarms_created > 0:

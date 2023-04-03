@@ -1,14 +1,14 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Personalize monitoring tools including CloudWatch metrics, alarms, and dashboard; optional automated cost optimization
+  (P9E-MONITOR) -Personalize monitoring tools including CloudWatch metrics, alarms, and dashboard; optional automated cost optimization
 
 Metadata:
   AWS::ServerlessRepo::Application:
     Name: Amazon-Personalize-Monitor
     Description: >
       Creates a CloudWatch dashboard for monitoring the utilization of Amazon Personalize
-      campaigns, creates CloudWatch alarms based on a user-defined threshold, and
+      campaigns and recommenders; creates CloudWatch alarms based on a user-defined threshold; and
       includes automated cost optimization actions.
     Author: AWS
     SpdxLicenseId: MIT-0
@@ -16,28 +16,29 @@ Metadata:
     ReadmeUrl: README-SAR.md
     Labels: ['Personalize', 'CloudWatch', 'Monitoring']
     HomePageUrl: https://github.com/aws-samples/amazon-personalize-monitor
-    SemanticVersion: 1.0.0
+    SemanticVersion: 1.1.0
     SourceCodeUrl: https://github.com/aws-samples/amazon-personalize-monitor
 
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label:
-          default: "Amazon Personalize campaigns to monitor"
+          default: "Amazon Personalize inference resources to monitor"
         Parameters:
           - CampaignARNs
+          - RecommenderARNs
           - Regions
       - Label:
           default: "CloudWatch alarm configuration"
         Parameters:
-          - AutoCreateCampaignUtilizationAlarms
-          - CampaignThresholdAlarmLowerBound
-          - AutoCreateIdleCampaignAlarms
-          - IdleCampaignThresholdHours
+          - AutoCreateUtilizationAlarms
+          - UtilizationThresholdAlarmLowerBound
+          - AutoCreateIdleAlarms
+          - IdleThresholdHours
       - Label:
           default: "Cost optimization actions"
         Parameters:
-          - AutoAdjustCampaignMinProvisionedTPS
-          - AutoDeleteIdleCampaigns
+          - AutoAdjustMinTPS
+          - AutoDeleteOrStopIdleResources
       - Label:
           default: "Notifications"
         Parameters:
@@ -45,20 +46,22 @@ Metadata:
     ParameterLabels:
       CampaignARNs:
         default: "Personalize campaign ARNs to monitor"
+      RecommenderARNs:
+        default: "Personalize recommender ARNs to monitor"
       Regions:
         default: "AWS regions to monitor"
-      AutoCreateCampaignUtilizationAlarms:
-        default: "Automatically create campaign utilization CloudWatch alarms?"
-      CampaignThresholdAlarmLowerBound:
-        default: "Campaign utilization alarm lower bound threshold"
-      AutoCreateIdleCampaignAlarms:
-        default: "Automatically create idle campaign CloudWatch alarms?"
-      IdleCampaignThresholdHours:
+      AutoCreateUtilizationAlarms:
+        default: "Automatically create campaign/recommender utilization CloudWatch alarms?"
+      UtilizationThresholdAlarmLowerBound:
+        default: "Campaign/recommender utilization alarm lower bound threshold"
+      AutoCreateIdleAlarms:
+        default: "Automatically create idle campaign/recommender CloudWatch alarms?"
+      IdleThresholdHours:
         default: "Number of hours without requests to be considered idle"
-      AutoDeleteIdleCampaigns:
-        default: "Automatically delete idle campaigns in idle alarm state?"
-      AutoAdjustCampaignMinProvisionedTPS:
-        default: "Automatically adjust/lower minProvisionedTPS for campaigns in utilization alarm state"
+      AutoDeleteOrStopIdleResources:
+        default: "Automatically delete idle campaigns and stop idle recommenders in idle alarm state?"
+      AutoAdjustMinTPS:
+        default: "Automatically adjust/lower minProvisionedTPS/minRecommendationRequestsPerSecond for campaigns/recommenders in utilization alarm state?"
       NotificationEndpoint:
         default: "Email address to receive notifications"
 
@@ -66,65 +69,72 @@ Parameters:
   CampaignARNs:
     Type: String
     Description: >
-      Comma separated list of Amazon Personalize Campaign ARNs to monitor or 'all' to dynamically monitor all campaigns.
+      Comma separated list of Amazon Personalize campaign ARNs to monitor or 'all' to dynamically monitor all active campaigns.
+    Default: 'all'
+
+  RecommenderARNs:
+    Type: String
+    Description: >
+      Comma separated list of Amazon Personalize recommender ARNs to monitor or 'all' to dynamically monitor all active recommenders.
     Default: 'all'
 
   Regions:
     Type: String
     Description: >
-      Comma separated list of AWS region names. When using 'all' for CampaignARNs, this parameter can be used
-      to control the region(s) where the Personalize Monitor looks for active Personalize Campaigns. When not specified,
+      Comma separated list of AWS region names. When using 'all' for CampaignARNs or RecommenderARNs, this parameter can be used
+      to control the region(s) where the Personalize Monitor looks for active Personalize campaigns and recommenders. When not specified,
       the region where you deploy this application will be used.
 
-  AutoCreateCampaignUtilizationAlarms:
+  AutoCreateUtilizationAlarms:
     Type: String
     Description: >
-      Whether to automatically create CloudWatch alarms for campaign utilization for monitored campaigns. Valid values: Yes/No.
+      Whether to automatically create CloudWatch alarms for campaign/recommender utilization for monitored campaigns/recommenders. Valid values: Yes/No.
     AllowedValues:
       - 'Yes'
       - 'No'
     Default: 'Yes'
 
-  CampaignThresholdAlarmLowerBound:
+  UtilizationThresholdAlarmLowerBound:
     Type: Number
     Description: >
-      Campaign utilization alarm threshold value (in percent). When a monitored campaign's utilization falls below this value,
+      Utilization alarm threshold value (in percent). When a monitored campaign's or recommender's utilization falls below this value,
       the alarm state will be set to ALARM. Valid values: 0-1000 (integer).
     MinValue: 0
     MaxValue: 1000
     Default: 100
 
-  AutoAdjustCampaignMinProvisionedTPS:
+  AutoAdjustMinTPS:
     Type: String
     Description: >
-      Whether to automatically adjust minProvisionedTPS down to lowest average TPS over rolling 24 hour window. The
-      minProvisionedTPS will never be increased. Valid values: Yes/No.
+      Whether to automatically adjust minProvisionedTPS (campaigns) or minRecommendationRequestsPerSecond (recommenders) down to lowest average TPS over
+      rolling 24 hour window. The minProvisionedTPS/minRecommendationRequestsPerSecond will never be increased. Valid values: Yes/No.
     AllowedValues:
       - 'Yes'
       - 'No'
     Default: 'Yes'
 
-  AutoCreateIdleCampaignAlarms:
+  AutoCreateIdleAlarms:
     Type: String
     Description: >
-      Whether to automatically create CloudWatch alarms for detecting idle campaigns. Valid values: Yes/No.
+      Whether to automatically create CloudWatch alarms for detecting idle campaigns and recommenders. Valid values: Yes/No.
     AllowedValues:
       - 'Yes'
       - 'No'
     Default: 'Yes'
 
-  IdleCampaignThresholdHours:
+  IdleThresholdHours:
     Type: Number
     Description: >
-      Number of consecutive idle hours before a campaign is automatically deleted only if AutoDeleteIdleCampaigns is Yes. Valid values: 2-48 (integer).
+      Number of consecutive idle hours before a campaign is automatically deleted or recommender is automatically stopped only if AutoDeleteOrStopIdleResources
+      is Yes. Valid values: 2-48 (integer).
     MinValue: 2
     MaxValue: 48
     Default: 24
 
-  AutoDeleteIdleCampaigns:
+  AutoDeleteOrStopIdleResources:
     Type: String
     Description: >
-      Whether to automatically delete campaigns that have been idle for IdleCampaignThresholdHours consecutive hours. Valid values: Yes/No.
+      Whether to automatically delete campaigns and stop recommenders that have been idle for IdleThresholdHours consecutive hours. Valid values: Yes/No.
     AllowedValues:
       - 'Yes'
       - 'No'
@@ -138,7 +148,7 @@ Parameters:
 Globals:
   Function:
     Timeout: 5
-    Runtime: python3.8
+    Runtime: python3.9
 
 Resources:
   NotificationsTopic:
@@ -179,6 +189,8 @@ Resources:
         detail-type:
           - PersonalizeCampaignMinProvisionedTPSUpdated
           - PersonalizeCampaignDeleted
+          - PersonalizeRecommenderMinRecommendationRPSUpdated
+          - PersonalizeRecommenderStopped
       State: ENABLED
       Targets:
         - Arn: !Ref NotificationsTopic
@@ -200,9 +212,9 @@ Resources:
     Properties:
       ContentUri: src/layer
       CompatibleRuntimes:
-        - python3.8
+        - python3.9
     Metadata:
-      BuildMethod: python3.8
+      BuildMethod: python3.9
 
   MonitorFunction:
     Type: AWS::Serverless::Function
@@ -212,6 +224,7 @@ Resources:
       CodeUri: src/personalize_monitor_function
       Handler: personalize_monitor.lambda_handler
       Layers:
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
         - !Ref CommonLayer
       Policies:
         - Statement:
@@ -219,8 +232,10 @@ Resources:
             Effect: Allow
             Action:
               - personalize:DescribeCampaign
+              - personalize:DescribeRecommender
               - personalize:DescribeSolutionVersion
               - personalize:ListCampaigns
+              - personalize:ListRecommenders
             Resource: '*'
           - Sid: CloudWatchPolicy
             Effect: Allow
@@ -247,14 +262,15 @@ Resources:
       Environment:
         Variables:
           CampaignARNs: !Ref CampaignARNs
+          RecommenderARNs: !Ref RecommenderARNs
           Regions: !Ref Regions
           NotificationsTopic: !Ref NotificationsTopic
-          AutoCreateCampaignUtilizationAlarms: !Ref AutoCreateCampaignUtilizationAlarms
-          CampaignThresholdAlarmLowerBound: !Ref CampaignThresholdAlarmLowerBound
-          AutoCreateIdleCampaignAlarms: !Ref AutoCreateIdleCampaignAlarms
-          IdleCampaignThresholdHours: !Ref IdleCampaignThresholdHours
-          AutoDeleteIdleCampaigns: !Ref AutoDeleteIdleCampaigns
-          AutoAdjustCampaignMinProvisionedTPS: !Ref AutoAdjustCampaignMinProvisionedTPS
+          AutoCreateUtilizationAlarms: !Ref AutoCreateUtilizationAlarms
+          UtilizationThresholdAlarmLowerBound: !Ref UtilizationThresholdAlarmLowerBound
+          AutoCreateIdleAlarms: !Ref AutoCreateIdleAlarms
+          IdleThresholdHours: !Ref IdleThresholdHours
+          AutoDeleteOrStopIdleResources: !Ref AutoDeleteOrStopIdleResources
+          AutoAdjustMinTPS: !Ref AutoAdjustMinTPS
 
   DashboardManagementFunction:
     Type: AWS::Serverless::Function
@@ -265,6 +281,7 @@ Resources:
       Handler: dashboard_mgmt.lambda_handler
       AutoPublishAlias: live
       Layers:
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
         - !Ref CommonLayer
       Policies:
         - Statement:
@@ -273,8 +290,10 @@ Resources:
             Action:
               - personalize:DescribeCampaign
               - personalize:DescribeDatasetGroup
+              - personalize:DescribeRecommender
               - personalize:DescribeSolutionVersion
               - personalize:ListCampaigns
+              - personalize:ListRecommenders
             Resource: '*'
           - Sid: DashboardPolicy
             Effect: Allow
@@ -285,6 +304,7 @@ Resources:
       Environment:
         Variables:
           CampaignARNs: !Ref CampaignARNs
+          RecommenderARNs: !Ref RecommenderARNs
           Regions: !Ref Regions
       Events:
         EBRule:
@@ -307,29 +327,33 @@ Resources:
     Properties:
       ServiceToken: !GetAtt DashboardManagementFunction.Arn
       CampaignARNs: !Ref CampaignARNs
+      RecommenderARNs: !Ref RecommenderARNs
       Regions: !Ref Regions
       NotificationsTopic: !Ref NotificationsTopic
-      AutoCreateCampaignUtilizationAlarms: !Ref AutoCreateCampaignUtilizationAlarms
-      CampaignThresholdAlarmLowerBound: !Ref CampaignThresholdAlarmLowerBound
-      AutoCreateIdleCampaignAlarms: !Ref AutoCreateIdleCampaignAlarms
-      IdleCampaignThresholdHours: !Ref IdleCampaignThresholdHours
-      AutoDeleteIdleCampaigns: !Ref AutoDeleteIdleCampaigns
-      AutoAdjustCampaignMinProvisionedTPS: !Ref AutoAdjustCampaignMinProvisionedTPS
+      AutoCreateUtilizationAlarms: !Ref AutoCreateUtilizationAlarms
+      UtilizationThresholdAlarmLowerBound: !Ref UtilizationThresholdAlarmLowerBound
+      AutoCreateIdleAlarms: !Ref AutoCreateIdleAlarms
+      IdleThresholdHours: !Ref IdleThresholdHours
+      AutoDeleteOrStopIdleResources: !Ref AutoDeleteOrStopIdleResources
+      AutoAdjustMinTPS: !Ref AutoAdjustMinTPS
 
-  UpdateCampaignTPSFunction:
+  UpdateTPSFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Amazon Personalize monitor function that updates the minProvisionedTPS for a campaign in response to an event
-      CodeUri: src/personalize_update_campaign_tps_function
-      Handler: personalize_update_campaign_tps.lambda_handler
+      Description: Amazon Personalize monitor function that updates the minProvisionedTPS for a campaign or the minRecommendationRequestsPerSecond for a recommender in response to an event
+      CodeUri: src/personalize_update_tps_function
+      Handler: personalize_update_tps.lambda_handler
       Layers:
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
         - !Ref CommonLayer
       Policies:
         - Statement:
           - Sid: PersonalizePolicy
             Effect: Allow
             Action:
+              - personalize:DescribeRecommender
               - personalize:UpdateCampaign
+              - personalize:UpdateRecommender
             Resource: '*'
           - Sid: EventBridgePolicy
             Effect: Allow
@@ -345,6 +369,7 @@ Resources:
                 - personalize.monitor
               detail-type:
                 - UpdatePersonalizeCampaignMinProvisionedTPS
+                - UpdatePersonalizeRecommenderMinRecommendationRPS
 
   DeleteCampaignFunction:
     Type: AWS::Serverless::Function
@@ -353,6 +378,7 @@ Resources:
       CodeUri: src/personalize_delete_campaign_function
       Handler: personalize_delete_campaign.lambda_handler
       Layers:
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
         - !Ref CommonLayer
       Policies:
         - Statement:
@@ -376,7 +402,7 @@ Resources:
             Effect: Allow
             Action:
               - cloudwatch:DeleteAlarms
-            Resource: !Sub 'arn:aws:cloudwatch:*:${AWS::AccountId}:alarm:PersonalizeMonitor-*'
+            Resource: !Sub 'arn:${AWS::Partition}:cloudwatch:*:${AWS::AccountId}:alarm:PersonalizeMonitor-*'
       Events:
         EBCustomRule:
           Type: EventBridgeRule
@@ -387,22 +413,26 @@ Resources:
               detail-type:
                 - DeletePersonalizeCampaign
 
-  CleanupFunction:
+  StopRecommenderFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Description: Amazon Personalize monitor custom resource function that cleans up directly created resources when the application is deleted
-      Timeout: 15
-      CodeUri: src/cleanup_resources_function
-      Handler: cleanup_resources.lambda_handler
-      AutoPublishAlias: live
+      Description: Amazon Personalize monitor function that stops a recommender in response to an event
+      CodeUri: src/personalize_stop_recommender_function
+      Handler: personalize_stop_recommender.lambda_handler
       Layers:
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
         - !Ref CommonLayer
       Policies:
         - Statement:
           - Sid: PersonalizePolicy
             Effect: Allow
             Action:
-              - personalize:ListCampaigns
+              - personalize:StopRecommender
+            Resource: '*'
+          - Sid: EventBridgePolicy
+            Effect: Allow
+            Action:
+              - events:PutEvents
             Resource: '*'
           - Sid: CloudWatchFindAlarmsPolicy
             Effect: Allow
@@ -414,10 +444,51 @@ Resources:
             Effect: Allow
             Action:
               - cloudwatch:DeleteAlarms
-            Resource: !Sub 'arn:aws:cloudwatch:*:${AWS::AccountId}:alarm:PersonalizeMonitor-*'
+            Resource: !Sub 'arn:${AWS::Partition}:cloudwatch:*:${AWS::AccountId}:alarm:PersonalizeMonitor-*'
+      Events:
+        EBCustomRule:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - personalize.monitor
+              detail-type:
+                - StopPersonalizeRecommender
+
+  CleanupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Amazon Personalize monitor custom resource function that cleans up directly created resources when the application is deleted
+      Timeout: 15
+      CodeUri: src/cleanup_resources_function
+      Handler: cleanup_resources.lambda_handler
+      AutoPublishAlias: live
+      Layers:
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
+        - !Ref CommonLayer
+      Policies:
+        - Statement:
+          - Sid: PersonalizePolicy
+            Effect: Allow
+            Action:
+              - personalize:ListCampaigns
+              - personalize:ListRecommenders
+            Resource: '*'
+          - Sid: CloudWatchFindAlarmsPolicy
+            Effect: Allow
+            Action:
+              - cloudwatch:DescribeAlarms
+              - cloudwatch:ListTagsForResource
+            Resource: '*'
+          - Sid: CloudWatchDeletePolicy
+            Effect: Allow
+            Action:
+              - cloudwatch:DeleteAlarms
+            Resource: !Sub 'arn:${AWS::Partition}:cloudwatch:*:${AWS::AccountId}:alarm:PersonalizeMonitor-*'
       Environment:
         Variables:
           CampaignARNs: !Ref CampaignARNs
+          RecommenderARNs: !Ref RecommenderARNs
           Regions: !Ref Regions
 
   CleanupCustomResource:
@@ -425,14 +496,15 @@ Resources:
     Properties:
       ServiceToken: !GetAtt CleanupFunction.Arn
       CampaignARNs: !Ref CampaignARNs
+      RecommenderARNs: !Ref RecommenderARNs
       Regions: !Ref Regions
       NotificationsTopic: !Ref NotificationsTopic
-      AutoCreateCampaignUtilizationAlarms: !Ref AutoCreateCampaignUtilizationAlarms
-      CampaignThresholdAlarmLowerBound: !Ref CampaignThresholdAlarmLowerBound
-      AutoCreateIdleCampaignAlarms: !Ref AutoCreateIdleCampaignAlarms
-      IdleCampaignThresholdHours: !Ref IdleCampaignThresholdHours
-      AutoDeleteIdleCampaigns: !Ref AutoDeleteIdleCampaigns
-      AutoAdjustCampaignMinProvisionedTPS: !Ref AutoAdjustCampaignMinProvisionedTPS
+      AutoCreateUtilizationAlarms: !Ref AutoCreateUtilizationAlarms
+      UtilizationThresholdAlarmLowerBound: !Ref UtilizationThresholdAlarmLowerBound
+      AutoCreateIdleAlarms: !Ref AutoCreateIdleAlarms
+      IdleThresholdHours: !Ref IdleThresholdHours
+      AutoDeleteOrStopIdleResources: !Ref AutoDeleteOrStopIdleResources
+      AutoAdjustMinTPS: !Ref AutoAdjustMinTPS
 
 Outputs:
   MonitorFunction:
@@ -443,13 +515,17 @@ Outputs:
     Description: "CloudWatch Dashboard Management Function ARN"
     Value: !GetAtt DashboardManagementFunction.Arn
 
-  UpdateCampaignTPSFunction:
-    Description: "Update Personalize Campaign minProvisionedTPS Function ARN"
-    Value: !GetAtt UpdateCampaignTPSFunction.Arn
+  UpdateTPSFunction:
+    Description: "Update Personalize Campaign/Recommender TPS Function ARN"
+    Value: !GetAtt UpdateTPSFunction.Arn
 
   DeleteCampaignFunction:
     Description: "Delete Personalize Campaign Function ARN"
     Value: !GetAtt DeleteCampaignFunction.Arn
+
+  StopRecommenderFunction:
+    Description: "Stop Personalize Recommender Function ARN"
+    Value: !GetAtt StopRecommenderFunction.Arn
 
   NotificationsTopic:
     Description: "Notification SNS Topic ARN"

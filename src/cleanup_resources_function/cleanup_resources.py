@@ -14,7 +14,8 @@ from common import (
     ALARM_NAME_PREFIX,
     extract_region,
     get_client,
-    determine_campaign_arns
+    determine_campaign_arns,
+    determine_recommender_arns
 )
 
 logger = Logger()
@@ -23,13 +24,18 @@ helper = CfnResource()
 @helper.delete
 def delete_resource(event, _):
     campaign_arns = determine_campaign_arns(event.get('ResourceProperties'))
+    recommender_arns = determine_recommender_arns(event.get('ResourceProperties'))
 
     logger.debug('Campaigns to check for resources to delete: %s', campaign_arns)
+    logger.debug('Recommenders to check for resources to delete: %s', recommender_arns)
 
     regions = set()
 
     for campaign_arn in campaign_arns:
         regions.add(extract_region(campaign_arn))
+
+    for recommender_arn in recommender_arns:
+        regions.add(extract_region(recommender_arn))
 
     logger.debug('Regions to check for resources to delete: %s', regions)
 
@@ -52,7 +58,7 @@ def delete_resource(event, _):
 
         if alarm_names_to_delete:
             # FUTURE: max check of 100
-            logger.info('Deleting CloudWatch alarms in %s for campaigns %s: %s', region, campaign_arns, alarm_names_to_delete)
+            logger.info('Deleting CloudWatch alarms in %s for campaigns %s and recommenders %s: %s', region, campaign_arns, recommender_arns, alarm_names_to_delete)
             cw.delete_alarms(AlarmNames=list(alarm_names_to_delete))
             alarms_deleted += len(alarm_names_to_delete)
 

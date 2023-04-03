@@ -1,2 +1,6 @@
-aws-lambda-powertools==1.6.1
+# Runtime requirements:
+# Note: the following dependency must be provided at runtime as Lambda layer:
+#   - AWS Lambda Power Tools as a Lambda layer.
+# Explicitly bring in a more recent boto3 to get latest API defs for Personalize that include recommender support.
+boto3==1.26.104
 expiring-dict==1.1.0
