@@ -1,1 +1,2 @@
-# Dependencies bundled in layer
+# Note: AWS Lambda Power Tools dependency is satisfied by Lambda layer at runtime (part of deployment).
+crhelper==2.0.6

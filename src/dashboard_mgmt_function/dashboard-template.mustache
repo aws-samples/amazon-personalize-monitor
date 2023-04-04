@@ -5,11 +5,11 @@
 		"height": 4,
 		"properties": {
 			"metrics": [
-				["{{namespace}}", "monitoredCampaignCount"]
+				["{{namespace}}", "monitoredResourceCount"]
 			],
 			"view": "singleValue",
 			"region": "{{current_region}}",
-			"title": "Campaigns Monitored",
+			"title": "Resources Monitored",
 			"stat": "Average",
 			"period": 300
 		}
@@ -19,7 +19,7 @@
 		"width": 20,
 		"height": 4,
 		"properties": {
-			"markdown": "\n## Amazon Personalize Monitor Dashboard\n*This dashboard and its widgets were created and managed via the [Personalize Monitor](https://github.com/aws-samples/amazon-personalize-monitor) application.*\n\nFor best practices on integrating with and operating [Amazon Personalize](https://aws.amazon.com/personalize/), please see our [Cheat Sheet](https://github.com/aws-samples/amazon-personalize-samples/blob/master/PersonalizeCheatSheet2.0.md).\n\nResources: [Service Documentation](https://docs.aws.amazon.com/personalize/latest/dg/what-is-personalize.html) | [Personalize Blog](https://aws.amazon.com/blogs/machine-learning/category/artificial-intelligence/amazon-personalize/) | [Samples on GitHub](https://github.com/aws-samples/amazon-personalize-samples)\n"
+			"markdown": "\n## Amazon Personalize Monitor Dashboard\n*This dashboard and its widgets are automatically managed by the [Personalize Monitor](https://github.com/aws-samples/amazon-personalize-monitor/) application. This is an open-source project. Please submit bugs/fixes/ideas [here](https://github.com/aws-samples/personalization-apis/issues).*\n\nFor best practices on integrating with and operating [Amazon Personalize](https://aws.amazon.com/personalize/), please see our [Cheat Sheet](https://github.com/aws-samples/amazon-personalize-samples/blob/master/PersonalizeCheatSheet2.0.md).\n\nAmazon Personalize resources: [Service Documentation](https://docs.aws.amazon.com/personalize/latest/dg/what-is-personalize.html) | [Personalize Blog](https://aws.amazon.com/blogs/machine-learning/category/artificial-intelligence/amazon-personalize/) | [Samples on GitHub](https://github.com/aws-samples/amazon-personalize-samples)\n"
 		}
 	}
 	{{#dataset_groups}}
@@ -28,7 +28,7 @@
 		"width": 24,
 		"height": 1,
 		"properties": {
-			"markdown": "\n### Dataset Group: **{{name}}** ({{region}}) | [Manage](https://console.aws.amazon.com/personalize/home?region={{region}}#arn:aws:personalize:{{region}}:{{account_id}}:dataset-group${{name}}/campaigns)\n"
+			"markdown": "\n### Dataset Group: **{{name}}** ({{region}}) | [Manage](https://console.aws.amazon.com/personalize/home?region={{region}}#arn:aws:personalize:{{region}}:{{account_id}}:dataset-group${{name}}/setup)\n"
 		}
 	},
 	{
@@ -37,24 +37,24 @@
 		"height": 8,
 		"properties": {
 			"metrics": [
-				{{#campaigns}}
-				["{{namespace}}", "minProvisionedTPS", "CampaignArn", "{{campaign_arn}}", {
-					"label": "{{name}} minProvisionedTPS"
+				{{#inference_resources}}
+				["{{namespace}}", "{{resource_min_tps_name}}", "{{resource_arn_name}}", "{{inference_arn}}", {
+					"label": "{{name}} {{resource_min_tps_name}}"
 				}],
-				["{{namespace}}", "averageTPS", "CampaignArn", "{{campaign_arn}}", {
-					"label": "{{name}} averageTPS"
-				}]{{^last_campaign}}, {{/last_campaign}}
-				{{/campaigns}}
+				["{{namespace}}", "{{resource_avg_tps_name}}", "{{resource_arn_name}}", "{{inference_arn}}", {
+					"label": "{{name}} {{resource_avg_tps_name}}"
+				}]{{^last_resource}}, {{/last_resource}}
+				{{/inference_resources}}
 			],
 			"region": "{{region}}",
 			"view": "timeSeries",
 			"stacked": false,
 			"stat": "Average",
 			"period": 300,
-			"title": "Actual vs Provisioned TPS",
+			"title": "Actual vs Provisioned TPS/RPS",
 			"yAxis": {
 				"left": {
-					"label": "TPS",
+					"label": "TPS/RPS",
 					"min": 0,
 					"showUnits": false
 				},
@@ -65,7 +65,7 @@
 			},
 			"annotations": {
 				"horizontal": [{
-					"label": "Lowest TPS Allowed",
+					"label": "Lowest TPS/RPS Allowed",
 					"value": 1
 				}]
 			}
@@ -79,14 +79,14 @@
 			"view": "timeSeries",
 			"stacked": false,
 			"metrics": [
-				{{#campaigns}}
-				["{{namespace}}", "campaignUtilization", "CampaignArn", "{{campaign_arn}}", {
-					"label": "{{name}} campaignUtilization"
-				}]{{^last_campaign}}, {{/last_campaign}}
-				{{/campaigns}}
+				{{#inference_resources}}
+				["{{namespace}}", "{{resource_utilization_name}}", "{{resource_arn_name}}", "{{inference_arn}}", {
+					"label": "{{name}} {{resource_utilization_name}}"
+				}]{{^last_resource}}, {{/last_resource}}
+				{{/inference_resources}}
 			],
 			"region": "{{region}}",
-			"title": "Campaign Utilization"
+			"title": "Campaign/Recommender Utilization"
 		}
 	},
 	{
@@ -97,14 +97,14 @@
 			"view": "timeSeries",
 			"stacked": false,
 			"metrics": [
-				{{#campaigns}}
-				["AWS/Personalize", "{{campaign_latency_metric_name}}", "CampaignArn", "{{campaign_arn}}", {
-					"label": "{{name}} {{campaign_latency_metric_name}}"
-				}]{{^last_campaign}}, {{/last_campaign}}
-				{{/campaigns}}
+				{{#inference_resources}}
+				["AWS/Personalize", "{{latency_metric_name}}", "{{resource_arn_name}}", "{{inference_arn}}", {
+					"label": "{{name}} {{latency_metric_name}}"
+				}]{{^last_resource}}, {{/last_resource}}
+				{{/inference_resources}}
 			],
 			"region": "{{region}}",
-			"title": "Campaign Latency"
+			"title": "Campaign/Recommender Latency"
 		}
 	}
 	{{/dataset_groups}}

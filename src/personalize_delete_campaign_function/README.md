@@ -1,8 +1,10 @@
 # Amazon Personalize Monitor - Delete Campaign Function
 
-This Lambda function deletes a Personalize campaign. It is called as the target of an EventBridge rule that matches events with the `DeletePersonalizeCampaign` detail-type. The [personalize-monitor](../personalize_monitor_function/) function publishes this event when the `AutoDeleteIdleCampaigns` deployment parameter is `Yes` AND a monitored campaign has been idle more than `IdleCampaignThresholdHours` hours. Therefore, an idle campaign is one that has not had any `GetRecommendations` or `GetPersonalizedRanking` calls in the last `IdleCampaignThresholdHours` hours.
+This Lambda function deletes a Personalize campaign. It is called as the target of an EventBridge rule that matches events with the `DeletePersonalizeCampaign` detail-type. The [personalize-monitor](../personalize_monitor_function/) function publishes this event when the `AutoDeleteOrStopIdleResources` deployment parameter is `Yes` AND a monitored campaign has been idle more than `IdleThresholdHours` hours. Therefore, an idle campaign is one that has not had any `GetRecommendations` or `GetPersonalizedRanking` calls in the last `IdleThresholdHours` hours.
 
 This function will also delete any CloudWatch alarms that were dynamically created by this application for the deleted campaign. Alarms can be created for idle campaigns and low utilization campaigns via the `AutoCreateIdleCampaignAlarms` and `AutoCreateCampaignUtilizationAlarms` deployment parameters.
+
+> Note that Personalize recommenders are stopped and not deleted by this application so that the underlying model artifacts are retained. See the [personalize_stop_recommender](../personalize_stop_recommender_function/) function for details.
 
 ## How it works
 
@@ -14,21 +16,21 @@ The EventBridge event structure that triggers this function looks something like
     "detail-type": "DeletePersonalizeCampaign",
     "resources": [ CAMPAIGN_ARN_TO_DELETE ],
     "detail": {
-        'CampaignARN': CAMPAIGN_ARN_TO_DELETE,
-        'CampaignUtilization': CURRENT_UTILIZATION,
-        'CampaignAgeHours': CAMPAIGN_AGE_IN_HOURS,
-        'IdleCampaignThresholdHours': CAMPAIGN_IDLE_HOURS,
+        'ARN': CAMPAIGN_ARN_TO_DELETE,
+        'Utilization': CURRENT_UTILIZATION,
+        'AgeHours': CAMPAIGN_AGE_IN_HOURS,
+        'IdleThresholdHours': CAMPAIGN_IDLE_HOURS,
         'TotalRequestsDuringIdleThresholdHours': 0,
         'Reason': DESCRIPTIVE_REASON_FOR_DELETE
     }
 }
 ```
 
-This function can also be invoked directly as part of your own operational process. The event you pass to the function only requires the campaign ARN as follows. 
+This function can also be invoked directly as part of your own operational process. The event you pass to the function only requires the campaign ARN as follows.
 
 ```javascript
 {
-    "CampaignARN": CAMPAIGN_ARN_TO_DELETE,
+    "ARN": CAMPAIGN_ARN_TO_DELETE,
     "Reason": OPTIONAL_DESCRIPTIVE_REASON_FOR_DELETE
 }
 ```
@@ -49,7 +51,7 @@ The following event is published to EventBridge to signal that a campaign has be
     "detail_type": "PersonalizeCampaignDeleted",
     "resources": [ CAMPAIGN_ARN_DELETED ],
     "detail": {
-        "CampaignARN": CAMPAIGN_ARN_DELETED,
+        "ARN": CAMPAIGN_ARN_DELETED,
         "Reason": DESCRIPTIVE_REASON_FOR_DELETE
     }
 }
@@ -67,7 +69,7 @@ Since a monitored campaign has been deleted, the CloudWatch dashboard needs to b
     "detail_type": "BuildPersonalizeMonitorDashboard",
     "resources": [ CAMPAIGN_ARN_DELETED ],
     "detail": {
-        "CampaignARN": CAMPAIGN_ARN_DELETED,
+        "ARN": CAMPAIGN_ARN_DELETED,
         "Reason": DESCRIPTIVE_REASON_FOR_REBUILD
     }
 }

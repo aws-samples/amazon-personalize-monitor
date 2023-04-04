@@ -5,19 +5,19 @@
 
 This function is called two ways:
 
-1. From CloudFormation when the application is deployed, updated, or deleted in an AWS 
-account. When the resource is created, this function will create the Personalize 
+1. From CloudFormation when the application is deployed, updated, or deleted in an AWS
+account. When the resource is created, this function will create the Personalize
 Monitor Dashboard in CloudWatch populated with widgets for monitoring Personalize
-resources configured as deployment parameters. 
+resources configured as deployment parameters.
 
-When this resource is updated (i.e. redeployed), the dashboard will be rebuilt and 
+When this resource is updated (i.e. redeployed), the dashboard will be rebuilt and
 updated/replaced.
 
 When this resource is deleted, this function will delete the CloudWatch Dashboard.
 
-2. As the target of an EventBridge rule that signals that the dashboard should be 
-rebuilt as a result of an event occurring. The event could be after a campaign has 
-been deleted and therefore a good point to rebuild the dashboard. It could also 
+2. As the target of an EventBridge rule that signals that the dashboard should be
+rebuilt as a result of an event occurring. The event could be after a campaign has
+been deleted and therefore a good point to rebuild the dashboard. It could also
 be setup to periodically rebuild the dashboard on a schedule so it picks up new
 campaigns too.
 
@@ -35,7 +35,8 @@ from common import (
     extract_region,
     extract_account_id,
     get_client,
-    get_configured_active_campaigns
+    get_configured_active_campaigns,
+    get_configured_active_recommenders
 )
 
 logger = Logger()
@@ -43,7 +44,7 @@ helper = CfnResource()
 
 cloudwatch = boto3.client('cloudwatch')
 
-DASHBOARD_NAME = 'Personalize-Monitor'
+DASHBOARD_NAME = 'Amazon-Personalize-Monitor'
 
 def build_dashboard(event):
     # Will hold the data used to render the template.
@@ -52,13 +53,16 @@ def build_dashboard(event):
     template_data['namespace'] = 'PersonalizeMonitor'
     template_data['current_region'] = os.environ['AWS_REGION']
 
-    logger.debug('Loading active campaigns')
+    logger.debug('Loading active campaigns and recommenders')
 
     campaigns = get_configured_active_campaigns(event)
     template_data['active_campaign_count'] = len(campaigns)
 
-    # Group campaigns by dataset group so we can create DSG specific widgets in rows
-    campaigns_by_dsg_arn = {}
+    recommenders = get_configured_active_recommenders(event)
+    template_data['active_recommender_count'] = len(recommenders)
+
+    # Group campaigns/recommenders by dataset group so we can create DSG specific widgets in rows
+    resources_by_dsg_arn = {}
     # Holds DSG info so we only have describe once per DSG
     dsgs_by_arn = {}
 
@@ -80,37 +84,72 @@ def build_dashboard(event):
             dsg = response['datasetGroup']
             dsgs_by_arn[dsg_arn] = dsg
 
-        campaign_datas = campaigns_by_dsg_arn.get(dsg_arn)
-        if not campaign_datas:
-            campaign_datas = []
-            campaigns_by_dsg_arn[dsg_arn] = campaign_datas
+        inference_resource_datas = resources_by_dsg_arn.get(dsg_arn)
+        if not inference_resource_datas:
+            inference_resource_datas = []
+            resources_by_dsg_arn[dsg_arn] = inference_resource_datas
 
         campaign_data = {
             'name': campaign['name'],
-            'campaign_arn': campaign['campaignArn'],
+            'resource_arn_name': 'CampaignArn',
+            'resource_min_tps_name': 'minProvisionedTPS',
+            'resource_avg_tps_name': 'averageTPS',
+            'resource_utilization_name': 'campaignUtilization',
+            'inference_arn': campaign['campaignArn'],
             'region': campaign_region
         }
 
         if recipe_arn == 'arn:aws:personalize:::recipe/aws-personalized-ranking':
-            campaign_data['campaign_latency_metric_name'] = 'GetPersonalizedRankingLatency'
+            campaign_data['latency_metric_name'] = 'GetPersonalizedRankingLatency'
         else:
-            campaign_data['campaign_latency_metric_name'] = 'GetRecommendationsLatency'
+            campaign_data['latency_metric_name'] = 'GetRecommendationsLatency'
 
-        campaign_datas.append(campaign_data)
+        inference_resource_datas.append(campaign_data)
+
+    for recommender in recommenders:
+        logger.info('Recommender %s will be added to the dashboard', recommender['recommenderArn'])
+
+        recommender_region = extract_region(recommender['recommenderArn'])
+
+        dsg_arn = recommender['datasetGroupArn']
+
+        dsg = dsgs_by_arn.get(dsg_arn)
+        if not dsg:
+            response = personalize.describe_dataset_group(datasetGroupArn = dsg_arn)
+            dsg = response['datasetGroup']
+            dsgs_by_arn[dsg_arn] = dsg
+
+        inference_resource_datas = resources_by_dsg_arn.get(dsg_arn)
+        if not inference_resource_datas:
+            inference_resource_datas = []
+            resources_by_dsg_arn[dsg_arn] = inference_resource_datas
+
+        recommender_data = {
+            'name': recommender['name'],
+            'resource_arn_name': 'RecommenderArn',
+            'resource_min_tps_name': 'minRecommendationRequestsPerSecond',
+            'resource_avg_tps_name': 'averageRPS',
+            'resource_utilization_name': 'recommenderUtilization',
+            'latency_metric_name': 'GetRecommendationsLatency',
+            'inference_arn': recommender['recommenderArn'],
+            'region': recommender_region
+        }
+
+        inference_resource_datas.append(recommender_data)
 
     dsgs_for_template = []
 
-    for dsg_arn, campaign_datas in campaigns_by_dsg_arn.items():
+    for dsg_arn, inference_resource_datas in resources_by_dsg_arn.items():
         dsg = dsgs_by_arn[dsg_arn]
 
         # Minor hack to know when we're on the last item in list when iterating in template.
-        campaign_datas[len(campaign_datas) - 1]['last_campaign'] = True
+        inference_resource_datas[len(inference_resource_datas) - 1]['last_resource'] = True
 
         dsgs_for_template.append({
             'name': dsg['name'],
             'region': extract_region(dsg_arn),
             'account_id': extract_account_id(dsg_arn),
-            'campaigns': campaign_datas
+            'inference_resources': inference_resource_datas
         })
 
     template_data['dataset_groups'] = dsgs_for_template
