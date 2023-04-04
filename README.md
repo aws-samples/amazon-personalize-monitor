@@ -1,4 +1,4 @@
-# Amazon Personalize Monitoring
+# Amazon Personalize Monitor
 
 <!-- vscode-markdown-toc -->
 * [Why is this important?](#Whyisthisimportant)
@@ -11,6 +11,9 @@
 		* [Over-provisioned campaigns](#Over-provisionedcampaigns)
 * [Architecture](#Architecture)
 * [Installing the application](#Installingtheapplication)
+	* [Option 1 - Install from Serverless Application Repository](#Option1-InstallfromServerlessApplicationRepository)
+	* [Option 2 - Install using Serverless Application Model](#Option2-InstallusingServerlessApplicationModel)
+	* [Application settings/parameters](#Applicationsettingsparameters)
 * [Uninstalling the application](#Uninstallingtheapplication)
 * [FAQs](#FAQs)
 * [Reporting issues](#Reportingissues)
@@ -92,9 +95,18 @@ See the readme pages for each function for details on the events that they produ
 
 ## <a name='Installingtheapplication'></a>Installing the application
 
-***IMPORTANT NOTE:** Deploying this application in your AWS account will create and consume AWS resources, which will cost money. For example, the CloudWatch dashboard, the Lambda function that collects additional monitoring metrics is run every 5 minutes, CloudWatch alarms, logging, and so on. Therefore, if after installing this application you choose not to use it as part of your monitoring strategy, be sure to follow the Uninstall instructions in the next section to avoid ongoing charges and to clean up all data.*
+***IMPORTANT NOTE:** Deploying this application in your AWS account will create and consume AWS resources, which will cost money. For example, the CloudWatch dashboard, the Lambda function that collects additional monitoring metrics is run every 5 minutes, CloudWatch alarms, logging, and so on. Therefore, if after installing this application you choose not to use it as part of your monitoring strategy, be sure to follow the Uninstall instructions below to clean up all resources and avoid ongoing charges.*
 
-This application uses the AWS [Serverless Application Model](https://aws.amazon.com/serverless/sam/) (SAM) to build and deploy resources into your AWS account.
+### <a name='Option1-InstallfromServerlessApplicationRepository'></a>Option 1 - Install from Serverless Application Repository
+
+The easiest way to deploy this application is from the [Serverless Application Repository](https://aws.amazon.com/serverless/serverlessrepo/) (SAR).
+
+1. Within the AWS account where you wish to deploy the application, browse to the [application's page](https://serverlessrepo.aws.amazon.com/applications/arn:aws:serverlessrepo:us-east-1:316031960777:applications~Amazon-Personalize-Monitor) in the Serverless Application Repository and click **"Deploy"**.
+2. Enter/update values in the **"Application settings"** panel (described below) and click **"Deploy"** again.
+
+### <a name='Option2-InstallusingServerlessApplicationModel'></a>Option 2 - Install using Serverless Application Model
+
+If you'd rather install the application manually, you can use the AWS [Serverless Application Model](https://aws.amazon.com/serverless/sam/) (SAM) CLI to build and  deploy the application into your AWS account.
 
 To use the SAM CLI, you need the following tools.
 
@@ -115,7 +127,11 @@ sam build --use-container --cached
 sam deploy --guided
 ```
 
-The first command will build the source of the application. The second command will package and deploy the application to your AWS account, with a series of prompts:
+The first command will build the source of the application. The second command will package and deploy the application to your AWS account with a series of prompts. The following section describes the supported application parameters.
+
+### <a name='Applicationsettingsparameters'></a>Application settings/parameters
+
+Whether you install this application from SAR or SAM, the following parameters can be used to control how the application monitors your Personalize deployments.
 
 | Prompt/Parameter | Description | Default |
 | --- | --- | --- |
@@ -137,13 +153,15 @@ The first command will build the source of the application. The second command w
 
 ## <a name='Uninstallingtheapplication'></a>Uninstalling the application
 
-To remove the resources created by this application in your AWS account, use the AWS CLI. Assuming you used the default application name for the stack name (`personalize-monitor`), you can run the following:
+If you installed the application from the Serverless Application Repository, you can delete the application from the Lambda console in your AWS account (under Applications).
+
+Alternatively, if you installed the application using SAM, you can delete the application using the AWS CLI. Assuming you used the default application name for the stack name (`personalize-monitor`), you can run the following:
 
 ```bash
 aws cloudformation delete-stack --stack-name personalize-monitor
 ```
 
-Alternatively, you can delete the stack in CloudFormation in the AWS console.
+You can also delete the application stack in CloudFormation in the AWS console.
 
 ## <a name='FAQs'></a>FAQs
 
@@ -170,10 +188,6 @@ Alternatively, you can delete the stack in CloudFormation in the AWS console.
 If you want to change your deployment parameters that control what recommenders/campaigns are monitored, redeploy the application using the `--guided` parameter and follow the prompts.
 
 **IMPORTANT: Redeploying this application will fully rebuild and replace your Personalize Monitor dashboard so any changes you made manually to the dashboard will be lost.**
-
-```
-sam deploy --guided
-```
 
 ## <a name='Reportingissues'></a>Reporting issues
 

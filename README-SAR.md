@@ -1,4 +1,4 @@
-# Amazon Personalize Monitoring
+# Amazon Personalize Monitor
 
 This project contains the source code and supporting files for deploying a serverless application that adds monitoring, alerting, and optimzation capabilities for [Amazon Personalize](https://aws.amazon.com/personalize/), an AI service from AWS that allows you to create custom ML recommenders based on your data. Highlights include:
 
