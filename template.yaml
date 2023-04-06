@@ -16,7 +16,7 @@ Metadata:
     ReadmeUrl: README-SAR.md
     Labels: ['Personalize', 'CloudWatch', 'Monitoring']
     HomePageUrl: https://github.com/aws-samples/amazon-personalize-monitor
-    SemanticVersion: 1.2.0
+    SemanticVersion: 1.2.1
     SourceCodeUrl: https://github.com/aws-samples/amazon-personalize-monitor
 
   AWS::CloudFormation::Interface:
@@ -203,9 +203,15 @@ Resources:
             Effect: Allow
             Action:
               - sns:CreateTopic
+              - sns:ListSubscriptionsByTopic
               - sns:SetTopicAttributes
               - sns:Subscribe
             Resource: !Sub 'arn:${AWS::Partition}:sns:*:${AWS::AccountId}:PersonalizeMonitorNotifications'
+          - Sid: SnsSubPolicy
+            Effect: Allow
+            Action:
+              - sns:GetSubscriptionAttributes
+            Resource: '*'
       Events:
         ScheduledEvent:
           Type: Schedule

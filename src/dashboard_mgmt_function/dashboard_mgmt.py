@@ -152,7 +152,7 @@ def build_dashboard(event):
             'inference_resources': inference_resource_datas
         })
 
-    template_data['dataset_groups'] = dsgs_for_template
+    template_data['dataset_groups'] = sorted(dsgs_for_template, key = lambda dsg: dsg['region'] + dsg['name'])
 
     # Render template and use as dashboard body.
     with open('dashboard-template.mustache', 'r') as f:
