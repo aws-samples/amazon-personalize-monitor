@@ -8,7 +8,6 @@ utilization metrics and recommender RRPS in CloudWatch. The metrics are used for
 alarms and on the CloudWatch dashboard created by this application.
 """
 
-import boto3
 import json
 import os
 import datetime
@@ -190,6 +189,15 @@ def notifications_rule_exists(events_client) -> bool:
     except events_client.exceptions.ResourceNotFoundException:
         return False
 
+def get_notification_subscription(sns_client, topic_arn, endpoint: str) -> Dict:
+    subs_paginator = sns_client.get_paginator('list_subscriptions_by_topic')
+    for subs_page in subs_paginator.paginate(TopicArn = topic_arn):
+        if subs_page.get('Subscriptions'):
+            for sub in subs_page['Subscriptions']:
+                if endpoint == sub.get('Endpoint'):
+                    return sns_client.get_subscription_attributes(SubscriptionArn=sub['SubscriptionArn'])['Attributes']
+    return None
+
 def get_topic_arn(resource_region: str) -> str:
     # If the ARN has already been created/fetched, return it from cache.
     if resource_region in _topic_arn_by_region:
@@ -255,12 +263,19 @@ def get_topic_arn(resource_region: str) -> str:
     notification_endpoint = os.environ.get('NotificationEndpoint')
 
     if notification_endpoint:
-        logger.info('Subscribing endpoint %s to SNS topic %s', notification_endpoint, topic_arn)
-        sns.subscribe(
-            TopicArn = topic_arn,
-            Protocol = 'email',
-            Endpoint = notification_endpoint
-        )
+        logger.info('Verifying SNS topic subscription for %s', notification_endpoint)
+        subscription = get_notification_subscription(sns, topic_arn, notification_endpoint)
+        if subscription == None:
+            logger.info('Subscribing endpoint %s to SNS topic %s', notification_endpoint, topic_arn)
+            sns.subscribe(
+                TopicArn = topic_arn,
+                Protocol = 'email',
+                Endpoint = notification_endpoint
+            )
+        elif subscription['PendingConfirmation'] == 'true':
+            logger.warn('SNS topic subscription is still pending confirmation')
+        else:
+            logger.info('Endpoint is subscribed and confirmed for SNS topic')
     else:
         logger.warn('No notification endpoint specified at deployment so not adding subscriber')
 
