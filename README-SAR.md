@@ -29,7 +29,7 @@ For more details on the CloudWatch dashboard created and maintained by this appl
 
 ### CloudWatch Alarms
 
-At deployment time, you can optionally have this application automatically create [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that will alert you when a monitored recommender's or campaign's utilization drops below a threshold you define for nine out of twelve evaluation periods. Since the intervals are 5 minutes, that means that nine of the 5 minute evaluations over a 1 hour span must be below the threshold to enter an alarm status. The same rule applies to transition from alarm to OK status. Similarly, the idle recommender/campaign alarm will alert you when there has been no request activity for a recommender/campaign for a configurable amount of time. The alarms will be setup to alert you via email through an SNS topic. Once the alarms are setup, you can alternatively link them to any operations and messaging tools you already use (i.e. Slack, PagerDuty, etc).
+At deployment time, you can optionally have this application automatically create [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that will alert you when a monitored recommender's or campaign's utilization drops below a threshold you define for nine out of twelve evaluation periods. Since the intervals are 5 minutes, that means that nine of the 5 minute evaluations over a 1 hour span must be below the threshold to enter an alarm status. The same rule applies to transition from alarm to OK status. Similarly, the idle recommender/campaign alarm will alert you when there has been no request activity for a recommender/campaign for a configurable amount of time. The alarms will be setup to alert you via email through an SNS topic in each region where resources are monitored. Once the alarms are setup, you can alternatively link them to any operations and messaging tools you already use (i.e. Slack, PagerDuty, etc).
 
 ![Personalize Monitor CloudWatch Alarms](https://raw.githubusercontent.com/aws-samples/amazon-personalize-monitor/master/images/personalize-monitor-cloudwatch-alarms.png)
 
@@ -81,13 +81,13 @@ See the readme pages for each function for details on the events that they produ
 | AutoCreateIdleAlarms | Whether to automatically create a idle detection CloudWatch alarm for each monitored recommender/campaign. | `Yes` |
 | IdleThresholdHours | Number of hours that a recommender/campaign must be idle (i.e. no requests) before it is automatically stopped (recommender) or deleted (campaign). `AutoDeleteOrStopIdleResources` must be `Yes` for idle recommender stop or campaign deletion to occur. | `24` |
 | AutoDeleteOrStopIdleResources | Whether to automatically stop idle recommenders or delete idle campaigns. An idle recommender/campaign is one that has not had any requests in `IdleThresholdHours` hours. | `No` |
-| NotificationEndpoint | Email address to receive alarm and ok notifications, recommender stop/update, campaign delete/update events (optional). An [SNS](https://aws.amazon.com/sns/) topic is created and this email address will be added as a subscriber to that topic. You will receive a confirmation email for the SNS topic subscription so be sure to click the confirmation link in that email to ensure you receive notifications. | |
+| NotificationEndpoint | Email address to receive alarm and ok notifications, recommender stop/update, campaign delete/update events (optional). An [SNS](https://aws.amazon.com/sns/) topic is created in each region where resources are monitored and this email address will be added as a subscriber to the topic(s). You will receive a confirmation email for the SNS topic subscription in each region so be sure to click the confirmation link in that email to ensure you receive notifications. | |
 
 ## Uninstalling the application
 
 To remove the resources created by this application in your AWS account, be sure to uninstall the application.
 
-## <a name='FAQs'></a>FAQs
+## FAQs
 
 ***Q: Can I use this application to determine my accumulated inference charges during the month?***
 

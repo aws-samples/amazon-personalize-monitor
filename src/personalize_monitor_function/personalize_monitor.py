@@ -8,6 +8,7 @@ utilization metrics and recommender RRPS in CloudWatch. The metrics are used for
 alarms and on the CloudWatch dashboard created by this application.
 """
 
+import boto3
 import json
 import os
 import datetime
@@ -21,6 +22,9 @@ from aws_lambda_powertools import Logger
 from common import (
     PROJECT_NAME,
     ALARM_NAME_PREFIX,
+    SNS_TOPIC_NAME,
+    NOTIFICATIONS_RULE,
+    NOTIFICATIONS_RULE_TARGET_ID,
     extract_region,
     get_client,
     get_configured_active_campaigns,
@@ -38,6 +42,8 @@ ALARM_NAME_PREFIX_LOW_CAMPAIGN_UTILIZATION = ALARM_NAME_PREFIX + 'LowCampaignUti
 ALARM_NAME_PREFIX_LOW_RECOMMENDER_UTILIZATION = ALARM_NAME_PREFIX + 'LowRecommenderUtilization-'
 ALARM_NAME_PREFIX_IDLE_CAMPAIGN = ALARM_NAME_PREFIX + 'IdleCampaign-'
 ALARM_NAME_PREFIX_IDLE_RECOMMENDER = ALARM_NAME_PREFIX + 'IdleRecommender-'
+
+_topic_arn_by_region = {}
 
 def get_recipe_arn(resource: Dict):
     recipe_arn = resource.get('recipeArn')
@@ -177,6 +183,89 @@ def append_metric(metric_datas_by_region, region, metric):
 
     metric_datas.append(metric)
 
+def notifications_rule_exists(events_client) -> bool:
+    try:
+        events_client.describe_rule(Name = NOTIFICATIONS_RULE)
+        return True
+    except events_client.exceptions.ResourceNotFoundException:
+        return False
+
+def get_topic_arn(resource_region: str) -> str:
+    # If the ARN has already been created/fetched, return it from cache.
+    if resource_region in _topic_arn_by_region:
+        logger.debug('Returning cached SNS topic ARN for region %s', resource_region)
+        return _topic_arn_by_region[resource_region]
+
+    sns = get_client(service_name = 'sns', region_name = resource_region)
+
+    logger.info('Creating/fetching SNS topic ARN for topic %s in region %s', SNS_TOPIC_NAME, resource_region)
+    response = sns.create_topic(Name = SNS_TOPIC_NAME)
+    topic_arn = response['TopicArn']
+
+    logger.info('Setting topic policy for SNS topic %s', topic_arn)
+    sns.set_topic_attributes(
+        TopicArn = topic_arn,
+        AttributeName = 'Policy',
+        AttributeValue = '''{
+            "Version": "2008-10-17",
+            "Id": "PublishPolicy",
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": {
+                "Service": [
+                    "cloudwatch.amazonaws.com",
+                    "events.amazonaws.com"
+                ]
+                },
+                "Action": [ "sns:Publish" ],
+                "Resource": "%s"
+            }]
+        }''' % (topic_arn)
+    )
+
+    # Cache it so we avoid repeat calls while function is resident.
+    _topic_arn_by_region[resource_region] = topic_arn
+
+    events = get_client(service_name = 'events', region_name = resource_region)
+
+    if not notifications_rule_exists(events):
+        logger.info('EventBridge notifications rule %s does not exist; creating', NOTIFICATIONS_RULE)
+
+        response = events.put_rule(
+            Name = NOTIFICATIONS_RULE,
+            EventPattern = '''{
+                "detail-type": ["PersonalizeCampaignMinProvisionedTPSUpdated", "PersonalizeCampaignDeleted", "PersonalizeRecommenderMinRecommendationRPSUpdated", "PersonalizeRecommenderStopped"],
+                "source": ["personalize.monitor"]
+            }''',
+            State = 'ENABLED',
+            Description = 'Routes Personalize Monitor notifications to notification SNS topic'
+        )
+
+        logger.info('Setting target on notification rule')
+        events.put_targets(
+            Rule = NOTIFICATIONS_RULE,
+            Targets = [{
+                'Id': NOTIFICATIONS_RULE_TARGET_ID,
+                'Arn': topic_arn
+            }]
+        )
+    else:
+        logger.info('EventBridge notification rule %s already exists', NOTIFICATIONS_RULE)
+
+    notification_endpoint = os.environ.get('NotificationEndpoint')
+
+    if notification_endpoint:
+        logger.info('Subscribing endpoint %s to SNS topic %s', notification_endpoint, topic_arn)
+        sns.subscribe(
+            TopicArn = topic_arn,
+            Protocol = 'email',
+            Endpoint = notification_endpoint
+        )
+    else:
+        logger.warn('No notification endpoint specified at deployment so not adding subscriber')
+
+    return topic_arn
+
 def create_utilization_alarm(resource_region, resource, utilization_threshold_lower_bound):
     cw = get_client(service_name = 'cloudwatch', region_name = resource_region)
 
@@ -228,7 +317,7 @@ def create_utilization_alarm(resource_region, resource, utilization_threshold_lo
     if not low_utilization_alarm_exists:
         logger.info('Creating lower bound utilization alarm for %s', resource[arn_key])
 
-        topic_arn = os.environ['NotificationsTopic']
+        topic_arn = get_topic_arn(resource_region)
 
         cw.put_metric_alarm(
             AlarmName = alarm_name,
@@ -271,7 +360,7 @@ def create_utilization_alarm(resource_region, resource, utilization_threshold_lo
 
 def create_idle_resource_alarm(resource_region, resource, idle_threshold_hours):
     cw = get_client(service_name = 'cloudwatch', region_name = resource_region)
-    topic_arn = os.environ['NotificationsTopic']
+    topic_arn = get_topic_arn(resource_region)
 
     metric_name = get_inference_metric_name(resource)
 

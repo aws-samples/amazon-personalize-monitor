@@ -151,62 +151,6 @@ Globals:
     Runtime: python3.9
 
 Resources:
-  NotificationsTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      DisplayName: 'Personalize Monitor Notifications'
-      Subscription:
-        - Endpoint: !Ref NotificationEndpoint
-          Protocol: email
-      Tags:
-        - Key: 'CreatedBy'
-          Value: 'PersonalizeMonitor'
-      TopicName: PersonalizeMonitorNotifications
-
-  NotificationsTopicPolicy:
-    Type: AWS::SNS::TopicPolicy
-    Properties:
-      PolicyDocument:
-        Statement:
-          - Sid: PublishPolicy
-            Effect: Allow
-            Principal:
-              Service:
-                - cloudwatch.amazonaws.com
-                - events.amazonaws.com
-            Action: 'sns:Publish'
-            Resource: !Ref NotificationsTopic
-      Topics:
-        - !Ref NotificationsTopic
-
-  NotificationsRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Description: Routes Personalize Monitor notifications to notification SNS topic
-      EventPattern:
-        source:
-          - personalize.monitor
-        detail-type:
-          - PersonalizeCampaignMinProvisionedTPSUpdated
-          - PersonalizeCampaignDeleted
-          - PersonalizeRecommenderMinRecommendationRPSUpdated
-          - PersonalizeRecommenderStopped
-      State: ENABLED
-      Targets:
-        - Arn: !Ref NotificationsTopic
-          Id: PersonalizeMonitorNotificationsId
-          InputTransformer:
-            InputPathsMap:
-              reason: "$.detail.Reason"
-              resources: "$.resources"
-              type: "$.detail-type"
-            InputTemplate: |
-              "Amazon Personalize monitor notification:"
-              ""
-              "Message type: <type>"
-              "Resource(s): <resources>"
-              "Reason: <reason>"
-
   CommonLayer:
     Type: AWS::Serverless::LayerVersion
     Properties:
@@ -250,8 +194,18 @@ Resources:
           - Sid: EventBridgePolicy
             Effect: Allow
             Action:
+              - events:DescribeRule
               - events:PutEvents
+              - events:PutRule
+              - events:PutTargets
             Resource: '*'
+          - Sid: SnsPolicy
+            Effect: Allow
+            Action:
+              - sns:CreateTopic
+              - sns:SetTopicAttributes
+              - sns:Subscribe
+            Resource: !Sub 'arn:${AWS::Partition}:sns:*:${AWS::AccountId}:PersonalizeMonitorNotifications'
       Events:
         ScheduledEvent:
           Type: Schedule
@@ -264,7 +218,7 @@ Resources:
           CampaignARNs: !Ref CampaignARNs
           RecommenderARNs: !Ref RecommenderARNs
           Regions: !Ref Regions
-          NotificationsTopic: !Ref NotificationsTopic
+          NotificationEndpoint: !Ref NotificationEndpoint
           AutoCreateUtilizationAlarms: !Ref AutoCreateUtilizationAlarms
           UtilizationThresholdAlarmLowerBound: !Ref UtilizationThresholdAlarmLowerBound
           AutoCreateIdleAlarms: !Ref AutoCreateIdleAlarms
@@ -329,7 +283,6 @@ Resources:
       CampaignARNs: !Ref CampaignARNs
       RecommenderARNs: !Ref RecommenderARNs
       Regions: !Ref Regions
-      NotificationsTopic: !Ref NotificationsTopic
       AutoCreateUtilizationAlarms: !Ref AutoCreateUtilizationAlarms
       UtilizationThresholdAlarmLowerBound: !Ref UtilizationThresholdAlarmLowerBound
       AutoCreateIdleAlarms: !Ref AutoCreateIdleAlarms
@@ -485,6 +438,17 @@ Resources:
             Action:
               - cloudwatch:DeleteAlarms
             Resource: !Sub 'arn:${AWS::Partition}:cloudwatch:*:${AWS::AccountId}:alarm:PersonalizeMonitor-*'
+          - Sid: EventBridgePolicy
+            Effect: Allow
+            Action:
+              - events:DeleteRule
+              - events:RemoveTargets
+            Resource: !Sub 'arn:${AWS::Partition}:events:*:${AWS::AccountId}:rule/PersonalizeMonitor-NotificationsRule'
+          - Sid: SnsPolicy
+            Effect: Allow
+            Action:
+              - sns:DeleteTopic
+            Resource: !Sub 'arn:${AWS::Partition}:sns:*:${AWS::AccountId}:PersonalizeMonitorNotifications'
       Environment:
         Variables:
           CampaignARNs: !Ref CampaignARNs
@@ -498,7 +462,6 @@ Resources:
       CampaignARNs: !Ref CampaignARNs
       RecommenderARNs: !Ref RecommenderARNs
       Regions: !Ref Regions
-      NotificationsTopic: !Ref NotificationsTopic
       AutoCreateUtilizationAlarms: !Ref AutoCreateUtilizationAlarms
       UtilizationThresholdAlarmLowerBound: !Ref UtilizationThresholdAlarmLowerBound
       AutoCreateIdleAlarms: !Ref AutoCreateIdleAlarms
@@ -526,7 +489,3 @@ Outputs:
   StopRecommenderFunction:
     Description: "Stop Personalize Recommender Function ARN"
     Value: !GetAtt StopRecommenderFunction.Arn
-
-  NotificationsTopic:
-    Description: "Notification SNS Topic ARN"
-    Value: !Ref NotificationsTopic
