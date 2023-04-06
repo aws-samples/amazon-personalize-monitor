@@ -6,12 +6,17 @@
 This function is called as a CloudFormation custom resource.
 """
 
+import boto3
+
 from crhelper import CfnResource
 from aws_lambda_powertools import Logger
 
 from common import (
     PROJECT_NAME,
     ALARM_NAME_PREFIX,
+    SNS_TOPIC_NAME,
+    NOTIFICATIONS_RULE,
+    NOTIFICATIONS_RULE_TARGET_ID,
     extract_region,
     get_client,
     determine_campaign_arns,
@@ -21,8 +26,11 @@ from common import (
 logger = Logger()
 helper = CfnResource()
 
+sts = boto3.client('sts')
+account_id = sts.get_caller_identity()['Account']
+
 @helper.delete
-def delete_resource(event, _):
+def delete_resources(event, _):
     campaign_arns = determine_campaign_arns(event.get('ResourceProperties'))
     recommender_arns = determine_recommender_arns(event.get('ResourceProperties'))
 
@@ -61,6 +69,28 @@ def delete_resource(event, _):
             logger.info('Deleting CloudWatch alarms in %s for campaigns %s and recommenders %s: %s', region, campaign_arns, recommender_arns, alarm_names_to_delete)
             cw.delete_alarms(AlarmNames=list(alarm_names_to_delete))
             alarms_deleted += len(alarm_names_to_delete)
+
+        events = get_client(service_name = 'events', region_name = region)
+        try:
+            logger.info('Removing targets from EventBridge notification rule %s for region %s', NOTIFICATIONS_RULE, region)
+            events.remove_targets(
+                Rule = NOTIFICATIONS_RULE,
+                Ids = [ NOTIFICATIONS_RULE_TARGET_ID ]
+            )
+        except events.exceptions.ResourceNotFoundException:
+            logger.warn('EventBridge notification rule targets not found')
+
+        try:
+            logger.info('Deleting EventBridge notification rule %s for region %s', NOTIFICATIONS_RULE, region)
+            events.delete_rule(Name = NOTIFICATIONS_RULE)
+        except events.exceptions.ResourceNotFoundException:
+            logger.warn('EventBridge notification rule %s does not exist', NOTIFICATIONS_RULE)
+
+        sns = get_client(service_name = 'sns', region_name = region)
+        topic_arn = f'arn:aws:sns:{region}:{account_id}:{SNS_TOPIC_NAME}'
+        logger.info('Deleting SNS topic %s', topic_arn)
+        # This API is idempotent so will not fail if topic does not exist
+        sns.delete_topic(TopicArn = topic_arn)
 
     logger.info('Deleted %d alarms', alarms_deleted)
 

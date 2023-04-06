@@ -19,13 +19,15 @@ from expiring_dict import ExpiringDict
 logger = Logger(child=True)
 
 _clients_by_region = {}
-# Since the DescribeCampaign API easily throttles and we just need
-# the minProvisionedTPS from the campaign, use a cache to help smooth
-# out periods where we get throttled.
-_resource_cache = ExpiringDict(22 * 60)
+# Since the DescribeCampaign and DescribeRecommender APIs easily throttle,
+# use a cache to help smooth out periods where we get throttled.
+_resource_cache = ExpiringDict(max_age_seconds = 22 * 60)
 
 PROJECT_NAME = 'PersonalizeMonitor'
 ALARM_NAME_PREFIX = PROJECT_NAME + '-'
+SNS_TOPIC_NAME = 'PersonalizeMonitorNotifications'
+NOTIFICATIONS_RULE = 'PersonalizeMonitor-NotificationsRule'
+NOTIFICATIONS_RULE_TARGET_ID = 'PersonalizeMonitorNotificationsId'
 
 def put_event(detail_type, detail, resources = []):
     event_bridge = get_client('events')
