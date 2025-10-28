@@ -16,7 +16,7 @@ Metadata:
     ReadmeUrl: README-SAR.md
     Labels: ['Personalize', 'CloudWatch', 'Monitoring']
     HomePageUrl: https://github.com/aws-samples/amazon-personalize-monitor
-    SemanticVersion: 1.2.1
+    SemanticVersion: 1.3.0
     SourceCodeUrl: https://github.com/aws-samples/amazon-personalize-monitor
 
   AWS::CloudFormation::Interface:
@@ -148,7 +148,9 @@ Parameters:
 Globals:
   Function:
     Timeout: 5
-    Runtime: python3.9
+    Runtime: python3.13
+    Architectures:
+      - arm64
 
 Resources:
   CommonLayer:
@@ -156,9 +158,12 @@ Resources:
     Properties:
       ContentUri: src/layer
       CompatibleRuntimes:
-        - python3.9
+        - python3.13
+      CompatibleArchitectures:
+        - arm64
     Metadata:
-      BuildMethod: python3.9
+      BuildMethod: python3.13
+      BuildArchitecture: arm64
 
   MonitorFunction:
     Type: AWS::Serverless::Function
@@ -168,7 +173,7 @@ Resources:
       CodeUri: src/personalize_monitor_function
       Handler: personalize_monitor.lambda_handler
       Layers:
-        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python313-arm64:23'
         - !Ref CommonLayer
       Policies:
         - Statement:
@@ -241,7 +246,7 @@ Resources:
       Handler: dashboard_mgmt.lambda_handler
       AutoPublishAlias: live
       Layers:
-        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python313-arm64:23'
         - !Ref CommonLayer
       Policies:
         - Statement:
@@ -303,7 +308,7 @@ Resources:
       CodeUri: src/personalize_update_tps_function
       Handler: personalize_update_tps.lambda_handler
       Layers:
-        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python313-arm64:23'
         - !Ref CommonLayer
       Policies:
         - Statement:
@@ -337,7 +342,7 @@ Resources:
       CodeUri: src/personalize_delete_campaign_function
       Handler: personalize_delete_campaign.lambda_handler
       Layers:
-        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python313-arm64:23'
         - !Ref CommonLayer
       Policies:
         - Statement:
@@ -379,7 +384,7 @@ Resources:
       CodeUri: src/personalize_stop_recommender_function
       Handler: personalize_stop_recommender.lambda_handler
       Layers:
-        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python313-arm64:23'
         - !Ref CommonLayer
       Policies:
         - Statement:
@@ -423,7 +428,7 @@ Resources:
       Handler: cleanup_resources.lambda_handler
       AutoPublishAlias: live
       Layers:
-        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:24'
+        - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python313-arm64:23'
         - !Ref CommonLayer
       Policies:
         - Statement:
